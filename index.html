@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Heart Anatomy Explorer</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script>
+    // Component to simulate realistic lub-dub heart beat scaling
+    AFRAME.registerComponent('heartbeat', {
+      schema: { active: { default: false }, baseScale: { default: 1 } },
+      tick: function (time) {
+        if (!this.data.active) {
+          this.el.object3D.scale.setScalar(this.data.baseScale);
+          return;
+        }
+        // 1000ms heartbeat cycle. "Lub" at 0-150ms, "Dub" at 300-450ms.
+        let t = (time % 1000) / 1000;
+        let s = this.data.baseScale;
+        if (t < 0.15) {
+          s += Math.sin(t * Math.PI / 0.15) * (0.05 * this.data.baseScale);
+        } else if (t > 0.3 && t < 0.45) {
+          s += Math.sin((t - 0.3) * Math.PI / 0.15) * (0.06 * this.data.baseScale);
+        }
+        this.el.object3D.scale.setScalar(s);
+      }
+    });
+
+    // Component to simulate blood flow sweeping across the heart surface
+    AFRAME.registerComponent('blood-flow', {
+      schema: { active: { default: false } },
+      init: function() {
+        this.lights = [];
+        const colors = ['#0077ff', '#0077ff', '#ff0033', '#ff0033']; // Blue and Red flow
+        for(let i=0; i<4; i++) {
+          let l = document.createElement('a-entity');
+          // High intensity point lights to wash over the heart's surface textures
+          l.setAttribute('light', `type:point; color:${colors[i]}; intensity:25; distance:1.4; decay:2`);
+          this.el.appendChild(l);
+          this.lights.push(l);
+        }
+      },
+      tick: function(time) {
+        if (!this.data.active) {
+          if (this.lights[0].getAttribute('visible')) {
+            this.lights.forEach(l => l.setAttribute('visible', false));
+          }
+          return;
+        }
+        if (!this.lights[0].getAttribute('visible')) {
+          this.lights.forEach(l => l.setAttribute('visible', true));
+        }
+
+        // Cycle time: 1.8 seconds for dynamic rapid flow
+        let cycle = 1800;
+        
+        // 1. Blue flow IN (Vena Cava -> RV)
+        let p1 = (time % cycle) / cycle; 
+        this.lights[0].object3D.position.set(0.85, 1.4 - (p1 * 2.2), -0.1);
+
+        // 2. Blue flow OUT (RV -> Pulmonary Artery)
+        let p2 = ((time + cycle/2) % cycle) / cycle; 
+        this.lights[1].object3D.position.set(0.7 - (p2*0.35), -0.8 + (p2 * 2.2), 0.2);
+
+        // 3. Red flow IN (Lungs -> LV)
+        let p3 = ((time + 200) % cycle) / cycle; 
+        this.lights[2].object3D.position.set(-0.95, 0.8 - (p3 * 1.8), -0.1);
+
+        // 4. Red flow OUT (LV -> Aorta)
+        let p4 = ((time + (cycle/2)+200) % cycle) / cycle; 
+        this.lights[3].object3D.position.set(-0.7 + (p4*0.45), -1.0 + (p4 * 2.6), 0.2);
+      }
+    });
+
+    // Auto-scale heart to target world-unit size
+    AFRAME.registerComponent('autoscale', {
+      schema: { size: { type: 'number', default: 1.6 } },
+      init() {
+        this.el.addEventListener('model-loaded', () => {
+          const obj = this.el.getObject3D('mesh');
+          if (!obj) return;
+          
+          // Force double-sided rendering to fix hollow/invisible backface issues
+          obj.traverse((node) => {
+            if (node.isMesh && node.material) {
+              node.material.side = THREE.DoubleSide;
+              if (Array.isArray(node.material)) {
+                node.material.forEach(m => m.side = THREE.DoubleSide);
+              }
+            }
+          });
+
+          const box  = new THREE.Box3().setFromObject(obj);
+          const dim  = box.getSize(new THREE.Vector3());
+          const s    = this.data.size / Math.max(dim.x, dim.y, dim.z);
+          this.el.object3D.scale.setScalar(s);
+          const c = box.getCenter(new THREE.Vector3()).multiplyScalar(-s);
+          this.el.object3D.position.copy(c);
+          
+          // Apply heartbeat component instead of static pulse animation
+          this.el.setAttribute('heartbeat', `baseScale: ${s}; active: false`);
+          
+          document.getElementById('loading').style.display = 'none';
+        });
+      }
+    });
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #0e1117;
+      overflow: hidden;
+      width: 100vw; height: 100vh;
+    }
+
+    /* A-Frame canvas fills entire screen */
+    a-scene { width: 100vw; height: 100vh; }
+
+    /* ── TOP BAR ── */
+    #topbar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      background: rgba(10,12,18,0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(255,50,80,0.2);
+      z-index: 500;
+    }
+
+    .logo {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 0.82rem; font-weight: 700;
+      letter-spacing: 2px; text-transform: uppercase; color: #ff4466;
+    }
+
+    .logo-dot {
+      width: 26px; height: 26px;
+      background: radial-gradient(circle, #ff5577, #bb1133);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px;
+      box-shadow: 0 0 12px rgba(255,50,80,0.6);
+      animation: hb 0.9s ease-in-out infinite alternate;
+    }
+    @keyframes hb {
+      to { transform: scale(1.08); box-shadow: 0 0 20px rgba(255,50,80,0.9); }
+    }
+
+    .tbtn {
+      padding: 7px 14px;
+      background: rgba(255,50,80,0.1);
+      border: 1px solid rgba(255,50,80,0.3);
+      color: #ff8899;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.75rem;
+      font-family: 'Inter', sans-serif;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+      transition: all 0.18s;
+      margin-left: 8px;
+    }
+    .tbtn:hover  { background: rgba(255,50,80,0.25); color: #fff; }
+    .tbtn.active { background: rgba(255,50,80,0.38); color: #fff; border-color: #ff4466; }
+
+    /* ── PART SELECTOR (left) ── */
+    #partSelector {
+      position: fixed;
+      top: 72px; left: 16px;
+      display: flex; flex-direction: column; gap: 6px;
+      z-index: 400;
+    }
+
+    .part-btn {
+      display: flex; align-items: center; gap: 9px;
+      padding: 9px 14px;
+      background: rgba(8,10,18,0.82);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-left: 3px solid var(--clr);
+      border-radius: 7px;
+      cursor: pointer;
+      color: #aab;
+      font-size: 0.8rem;
+      font-family: 'Inter', sans-serif;
+      backdrop-filter: blur(10px);
+      transition: all 0.18s;
+      white-space: nowrap;
+    }
+    .part-btn:hover  { background: rgba(255,255,255,0.08); color: #dde; }
+    .part-btn.active { background: rgba(255,255,255,0.12); color: #fff; border-color: var(--clr); }
+
+    .pdot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--clr);
+      box-shadow: 0 0 6px var(--clr);
+      flex-shrink: 0;
+    }
+
+    /* ── INFO PANEL (right drawer) ── */
+    #infoPanel {
+      position: fixed;
+      top: 62px; right: 16px;
+      width: 300px;
+      background: rgba(8,10,20,0.93);
+      border: 1px solid rgba(255,50,80,0.2);
+      border-radius: 12px;
+      padding: 18px;
+      backdrop-filter: blur(16px);
+      z-index: 400;
+      display: none;
+      animation: slideIn 0.22s ease;
+    }
+    #infoPanel.visible { display: block; }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(16px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    .info-top {
+      display: flex; align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .info-title-row { display: flex; align-items: center; gap: 9px; }
+
+    .info-dot {
+      width: 11px; height: 11px; border-radius: 50%;
+      background: var(--pc, #ff4466);
+      box-shadow: 0 0 8px var(--pc, #ff4466);
+    }
+
+    .info-name { font-size: 1rem; font-weight: 700; color: #fff; }
+
+    .close-x {
+      background: none; border: none;
+      color: #445; font-size: 1.1rem; cursor: pointer;
+      line-height: 1;
+    }
+    .close-x:hover { color: #eee; }
+
+    .divider {
+      height: 1px;
+      background: linear-gradient(to right, var(--pc, #ff4466), transparent);
+      margin-bottom: 12px;
+    }
+
+    .info-desc {
+      font-size: 0.79rem; line-height: 1.65; color: #8899bb;
+      margin-bottom: 14px;
+    }
+
+    .facts-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 7px; margin-bottom: 14px;
+    }
+
+    .fact-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 7px;
+      padding: 9px 11px;
+    }
+    .fact-val {
+      display: block;
+      font-size: 0.95rem; font-weight: 700;
+      color: var(--pc, #ff4466); margin-bottom: 2px;
+    }
+    .fact-lbl {
+      font-size: 0.66rem; color: #4a5568;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+
+    .funcs-box {
+      background: rgba(255,50,80,0.05);
+      border: 1px solid rgba(255,50,80,0.12);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .funcs-box h4 {
+      font-size: 0.62rem; letter-spacing: 1.5px;
+      text-transform: uppercase; color: #445;
+      margin-bottom: 8px;
+    }
+    .funcs-box ul { list-style: none; }
+    .funcs-box li {
+      font-size: 0.76rem; color: #7788aa;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      display: flex; gap: 7px;
+    }
+    .funcs-box li:last-child { border-bottom: none; }
+    .funcs-box li::before { content: '▸'; color: #ff4466; flex-shrink: 0; }
+
+    /* ── LOADING ── */
+    #loading {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: rgba(14,17,23,0.9);
+      z-index: 600; gap: 14px;
+    }
+    .load-ring {
+      width: 52px; height: 52px;
+      border: 3px solid rgba(255,50,80,0.2);
+      border-top-color: #ff4466;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .load-text { font-size: 0.78rem; color: #445; letter-spacing: 1px; }
+
+    /* ── HINT ── */
+    #hint {
+      position: fixed;
+      bottom: 16px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      padding: 6px 18px;
+      font-size: 0.72rem; color: #445;
+      z-index: 400; pointer-events: none;
+      white-space: nowrap;
+    }
+
+    /* ── INTERIOR BADGE ── */
+    #interiorBadge {
+      position: fixed;
+      top: 62px; right: 330px;
+      background: rgba(0,200,255,0.1);
+      border: 1px solid rgba(0,200,255,0.3);
+      color: #00eeff;
+      border-radius: 6px;
+      padding: 5px 12px;
+      font-size: 0.68rem; letter-spacing: 1px;
+      display: none; z-index: 400;
+    }
+
+    /* ── VR HOW-TO BADGE ── */
+    #vrGuide {
+      position: fixed;
+      bottom: 48px; left: 50%; transform: translateX(-50%);
+      background: rgba(80,40,120,0.85);
+      border: 1px solid rgba(150,100,255,0.3);
+      color: #ccbbff;
+      border-radius: 8px;
+      padding: 8px 20px;
+      font-size: 0.73rem;
+      z-index: 400;
+      display: none;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    /* scrollbar */
+    #infoPanel::-webkit-scrollbar { width: 4px; }
+    #infoPanel::-webkit-scrollbar-thumb { background: rgba(255,50,80,0.2); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+  <!-- LOADING OVERLAY -->
+  <div id="loading">
+    <div class="load-ring"></div>
+    <div class="load-text">Loading Heart Model…</div>
+  </div>
+
+  <!-- TOP BAR -->
+  <div id="topbar">
+    <div class="logo">
+      <div class="logo-dot">❤</div>
+      Heart Anatomy Explorer
+    </div>
+    <div>
+      <button class="tbtn" id="btnBeat"     onclick="toggleBeat()">❤️ Beating</button>
+      <button class="tbtn" id="btnFlow"     onclick="toggleFlow()">🩸 Blood Flow</button>
+      <button class="tbtn" id="btnInterior" onclick="toggleInterior()">🔬 Interior View</button>
+      <button class="tbtn" id="btnSpin"     onclick="toggleSpin()">🔄 Auto-Rotate</button>
+      <button class="tbtn"                  onclick="showVRGuide()">🥽 VR</button>
+    </div>
+  </div>
+
+  <!-- PART SELECTOR — left overlay -->
+  <div id="partSelector">
+    <button class="part-btn" style="--clr:#e74c3c" onclick="showPart('rightAtrium',   this)"><span class="pdot" style="--clr:#e74c3c"></span>Right Atrium</button>
+    <button class="part-btn" style="--clr:#c0392b" onclick="showPart('rightVentricle',this)"><span class="pdot" style="--clr:#c0392b"></span>Right Ventricle</button>
+    <button class="part-btn" style="--clr:#2980b9" onclick="showPart('leftAtrium',    this)"><span class="pdot" style="--clr:#2980b9"></span>Left Atrium</button>
+    <button class="part-btn" style="--clr:#1a7fc1" onclick="showPart('leftVentricle', this)"><span class="pdot" style="--clr:#1a7fc1"></span>Left Ventricle</button>
+    <button class="part-btn" style="--clr:#e67e22" onclick="showPart('aorta',         this)"><span class="pdot" style="--clr:#e67e22"></span>Aorta</button>
+    <button class="part-btn" style="--clr:#9b59b6" onclick="showPart('pulmonaryArtery',this)"><span class="pdot" style="--clr:#9b59b6"></span>Pulmonary Artery</button>
+  </div>
+
+  <!-- INFO PANEL — right overlay -->
+  <div id="infoPanel">
+    <div class="info-top">
+      <div class="info-title-row">
+        <div class="info-dot" id="infoDot"></div>
+        <div class="info-name" id="infoName"></div>
+      </div>
+      <button class="close-x" onclick="closePanel()">✕</button>
+    </div>
+    <div class="divider" id="infoDivider"></div>
+    <div class="info-desc"  id="infoDesc"></div>
+    <div class="facts-grid" id="infoFacts"></div>
+    <div class="funcs-box">
+      <h4>Functions</h4>
+      <ul id="infoFuncs"></ul>
+    </div>
+  </div>
+
+  <!-- INTERIOR BADGE -->
+  <div id="interiorBadge">⬡ INTERIOR VIEW</div>
+
+  <!-- VR GUIDE POPUP -->
+  <div id="vrGuide" onclick="this.style.display='none'">
+    <strong>🥽 How to test in VR on Laptop</strong><br>
+    <span style="color:#9988cc">
+      Option 1 — Install <u>WebXR API Emulator</u> extension in Chrome<br>
+      Option 2 — Connect Meta Quest via USB (Quest Link) &amp; open in Quest Browser<br>
+      Option 3 — Mobile: open on phone, enter VR with a Cardboard headset<br><br>
+      Click anywhere to close
+    </span>
+  </div>
+
+  <!-- HINT -->
+  <div id="hint">🖱 Drag to rotate · Scroll to zoom · Click a part for info</div>
+
+  <!-- ══════════════════════════════════════════
+       A-FRAME SCENE — embedded fills the page
+  ══════════════════════════════════════════ -->
+  <a-scene
+    cursor="rayOrigin: mouse"
+    raycaster="objects: .clickable, .label-entity; far: 30"
+    vr-mode-ui="enabled: true"
+    loading-screen="enabled: false"
+    renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true"
+    webxr="optionalFeatures: local-floor,bounded-floor,hand-tracking"
+    embedded>
+
+    <a-assets timeout="90000">
+      <a-asset-item id="heartModel" src="./assets/human_heart_3d_model__anatomy__medical_project.glb"></a-asset-item>
+      <!-- Interior/cutaway model loaded as a separate asset -->
+      <a-asset-item id="heartInteriorModel" src="./assets/human_heart.glb"></a-asset-item>
+    </a-assets>
+
+    <!-- Sky -->
+    <a-sky color="#0e1117"></a-sky>
+
+    <!-- ── LIGHTING STUDIO RIG ── -->
+    <a-entity light="type:hemisphere; color:#c8c0b8; groundColor:#3a0008; intensity:0.95"></a-entity>
+    <a-entity light="type:directional; color:#fff5e8; intensity:3.5; castShadow:true" position="-3 5 4"></a-entity>
+    <a-entity light="type:point; color:#ffffff; intensity:4; distance:6; decay:1.5" position="0 0.3 3.5"></a-entity>
+    <a-entity light="type:point; color:#e8f0ff; intensity:3; distance:9; decay:1.8" position="4 4 0"></a-entity>
+    <a-entity light="type:point; color:#ffcc66; intensity:2.5; distance:8; decay:2" position="-4 1 2"></a-entity>
+    <a-entity light="type:point; color:#7755ff; intensity:2; distance:8; decay:2" position="2 -1 -4"></a-entity>
+    <a-entity light="type:point; color:#ff4422; intensity:1.8; distance:5; decay:2.2" position="0 -3 1"></a-entity>
+
+    <!-- ── HEART PIVOT ── -->
+    <a-entity id="heartPivot" position="0 0 0">
+
+      <!-- Exterior Heart model -->
+      <a-entity id="heartMesh" gltf-model="#heartModel"
+        autoscale="size: 1.6"
+        class="clickable"
+        shadow="cast:true; receive:true"
+        visible="true">
+      </a-entity>
+
+      <!-- Interior Heart model (hidden by default) -->
+      <a-entity id="heartInteriorMesh" gltf-model="#heartInteriorModel"
+        autoscale="size: 1.6"
+        class="clickable"
+        shadow="cast:true; receive:true"
+        visible="false">
+      </a-entity>
+
+      <!-- ── INTERIOR LABELS ── -->
+      <a-entity id="labels3D" visible="false">
+
+        <!-- Right Atrium -->
+        <a-entity position="0.85 0.45 0.1" class="label-entity" data-part="rightAtrium">
+          <a-plane width="0.7" height="0.16" material="color:#2a0008; opacity:0.96; transparent:true; shader:flat"></a-plane>
+          <a-plane width="0.024" height="0.16" position="-0.338 0 0.002" material="color:#e74c3c; opacity:1; shader:flat"></a-plane>
+          <a-text value="Right Atrium"              color="#ff7788" width="1.6" align="center" position="0.01 0.035 0.005"></a-text>
+          <a-text value="Receives deoxygenated blood" color="#c8d8f0" width="1.4" align="center" position="0.01 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.006" height="0.4" rotation="0 0 -62" position="-0.2 -0.3 0" material="color:#e74c3c; opacity:0.5; transparent:true; shader:flat"></a-cylinder>
+        </a-entity>
+
+        <!-- Right Ventricle -->
+        <a-entity position="0.9 -0.35 0.1" class="label-entity" data-part="rightVentricle">
+          <a-plane width="0.72" height="0.16" material="color:#250006; opacity:0.96; transparent:true; shader:flat"></a-plane>
+          <a-plane width="0.024" height="0.16" position="-0.348 0 0.002" material="color:#c0392b; opacity:1; shader:flat"></a-plane>
+          <a-text value="Right Ventricle"   color="#ff5566" width="1.6" align="center" position="0.01 0.035 0.005"></a-text>
+          <a-text value="Pumps blood to lungs" color="#c8d8f0" width="1.4" align="center" position="0.01 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.006" height="0.38" rotation="0 0 -75" position="-0.22 -0.25 0" material="color:#c0392b; opacity:0.5; transparent:true; shader:flat"></a-cylinder>
+        </a-entity>
+
+        <!-- Left Atrium -->
+        <a-entity position="-0.88 0.45 0.1" class="label-entity" data-part="leftAtrium">
+          <a-plane width="0.7" height="0.16" material="color:#00081f; opacity:0.96; transparent:true; shader:flat"></a-plane>
+          <a-plane width="0.024" height="0.16" position="0.338 0 0.002" material="color:#2980b9; opacity:1; shader:flat"></a-plane>
+          <a-text value="Left Atrium"                color="#4499ff" width="1.6" align="center" position="-0.01 0.035 0.005"></a-text>
+          <a-text value="Receives oxygenated blood"  color="#c8d8f0" width="1.4" align="center" position="-0.01 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.006" height="0.4" rotation="0 0 62" position="0.2 -0.3 0" material="color:#2980b9; opacity:0.5; transparent:true; shader:flat"></a-cylinder>
+        </a-entity>
+
+        <!-- Left Ventricle -->
+        <a-entity position="-0.92 -0.35 0.1" class="label-entity" data-part="leftVentricle">
+          <a-plane width="0.72" height="0.16" material="color:#00071c; opacity:0.96; transparent:true; shader:flat"></a-plane>
+          <a-plane width="0.024" height="0.16" position="0.348 0 0.002" material="color:#1a7fc1; opacity:1; shader:flat"></a-plane>
+          <a-text value="Left Ventricle"          color="#3399ff" width="1.6" align="center" position="-0.01 0.035 0.005"></a-text>
+          <a-text value="Pumps blood to whole body" color="#c8d8f0" width="1.4" align="center" position="-0.01 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.006" height="0.38" rotation="0 0 75" position="0.22 -0.25 0" material="color:#1a7fc1; opacity:0.5; transparent:true; shader:flat"></a-cylinder>
+        </a-entity>
+
+        <!-- Aorta -->
+        <a-entity position="-0.28 1.02 0.1" class="label-entity" data-part="aorta">
+          <a-plane width="0.56" height="0.16" material="color:#1e1000; opacity:0.96; transparent:true; shader:flat"></a-plane>
+          <a-plane width="0.024" height="0.16" position="-0.268 0 0.002" material="color:#e67e22; opacity:1; shader:flat"></a-plane>
+          <a-text value="Aorta"              color="#ffaa33" width="1.5" align="center" position="0 0.035 0.005"></a-text>
+          <a-text value="Main arterial trunk" color="#c8d8f0" width="1.3" align="center" position="0 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.006" height="0.28" rotation="0 0 -90" position="-0.02 -0.22 0" material="color:#e67e22; opacity:0.5; transparent:true; shader:flat"></a-cylinder>
+        </a-entity>
+
+        <!-- Pulmonary Artery -->
+        <a-entity position="0.36 1.02 0.1" class="label-entity" data-part="pulmonaryArtery">
+          <a-plane width="0.78" height="0.16" material="color:#100018; opacity:0.96; transparent:true; shader:flat"></a-plane>
+          <a-plane width="0.024" height="0.16" position="-0.378 0 0.002" material="color:#9b59b6; opacity:1; shader:flat"></a-plane>
+          <a-text value="Pulmonary Artery"       color="#bb55ff" width="1.7" align="center" position="0.01 0.035 0.005"></a-text>
+          <a-text value="To lungs (deoxygenated)" color="#c8d8f0" width="1.5" align="center" position="0.01 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.006" height="0.28" rotation="0 0 90" position="0.02 -0.22 0" material="color:#9b59b6; opacity:0.5; transparent:true; shader:flat"></a-cylinder>
+        </a-entity>
+
+      </a-entity><!-- /labels3D -->
+
+      <!-- ── BLOOD FLOW SYSTEM (Surface light washing) ── -->
+      <a-entity id="bloodFlowSystem" blood-flow="active: false"></a-entity>
+
+      <!-- ── VR INFO BOARD (follows camera in VR) ── -->
+      <a-entity id="vrBoard" visible="false">
+        <a-plane width="1.5" height="0.6" material="color:#080010; opacity:0.95; transparent:true; shader:flat"></a-plane>
+        <a-plane id="vrAccent" width="1.5" height="0.018" position="0 0.29 0.001" material="color:#ff4466; opacity:1; shader:flat"></a-plane>
+        <a-text id="vrName"  value="" color="#ffffff" width="2.8" align="center" position="0 0.19 0.012"></a-text>
+        <a-text id="vrDesc"  value="" color="#aabbdd" width="2.5" align="center" position="0 0 0.012" baseline="top" wrap-count="55"></a-text>
+        <a-text id="vrFacts" value="" color="#ff8899" width="2.8" align="center" position="0 -0.22 0.012"></a-text>
+      </a-entity>
+
+    </a-entity><!-- /heartPivot -->
+
+    <!-- ── CAMERA ── -->
+    <a-camera id="mainCamera" position="0 0 3.2"
+      look-controls="pointerLockEnabled: false"
+      wasd-controls="enabled: false"
+      fov="50">
+    </a-camera>
+
+    <!-- VR Controllers -->
+    <a-entity id="leftHand"  hand-controls="hand:left;  handModelStyle:lowPoly; color:#cc3344" raycaster="objects:.clickable,.label-entity; far:30; showLine:true; lineColor:#ff4466; lineOpacity:0.7"></a-entity>
+    <a-entity id="rightHand" hand-controls="hand:right; handModelStyle:lowPoly; color:#cc3344" raycaster="objects:.clickable,.label-entity; far:30; showLine:true; lineColor:#ff4466; lineOpacity:0.7"></a-entity>
+
+  </a-scene>
+
+  <!-- ──────────────────────────────────────── SCRIPT ──────────────────────────────────────── -->
+  <script>
+  // ── DATA ──────────────────────────────────────────────────────────────────
+  const PARTS = {
+    rightAtrium: {
+      color: '#e74c3c', name: 'Right Atrium',
+      desc: 'The right atrium receives deoxygenated blood from the body via the superior and inferior vena cava, then passes it to the right ventricle through the tricuspid valve.',
+      facts: [{ val:'~57 mL', lbl:'Volume' }, { val:'Tricuspid', lbl:'Valve' }, { val:'Low', lbl:'Pressure' }, { val:'Dark Red', lbl:'Blood' }],
+      funcs: ['Collects deoxygenated blood from body', 'Passes blood through tricuspid valve', 'Houses the sinoatrial (SA) node', 'Initiates the heartbeat signal']
+    },
+    rightVentricle: {
+      color: '#c0392b', name: 'Right Ventricle',
+      desc: 'The right ventricle pumps deoxygenated blood to the lungs via the pulmonary artery. It has thinner walls than the left ventricle.',
+      facts: [{ val:'~130 mL', lbl:'Volume' }, { val:'Pulmonary', lbl:'Valve' }, { val:'~25 mmHg', lbl:'Pressure' }, { val:'To Lungs', lbl:'Destination' }],
+      funcs: ['Pumps deoxygenated blood to lungs', 'Receives blood from right atrium', 'Generates pulmonary pressure', 'Thinner walls than left ventricle']
+    },
+    leftAtrium: {
+      color: '#2980b9', name: 'Left Atrium',
+      desc: 'The left atrium receives oxygenated blood from the lungs via four pulmonary veins, passing it to the left ventricle through the mitral valve.',
+      facts: [{ val:'~45 mL', lbl:'Volume' }, { val:'Mitral', lbl:'Valve' }, { val:'Pulm. Veins', lbl:'Source' }, { val:'Bright Red', lbl:'Blood' }],
+      funcs: ['Receives oxygenated blood from lungs', 'Passes blood through mitral valve', 'Acts as a pressure buffer', 'Maintains pulmonary venous pressure']
+    },
+    leftVentricle: {
+      color: '#1a7fc1', name: 'Left Ventricle',
+      desc: 'The most powerful chamber with the thickest walls. It generates high pressure to pump oxygenated blood through the aorta to the entire body.',
+      facts: [{ val:'~130 mL', lbl:'Volume' }, { val:'Aortic', lbl:'Valve' }, { val:'~120 mmHg', lbl:'Pressure' }, { val:'Whole Body', lbl:'Supplies' }],
+      funcs: ['Pumps oxygenated blood to the body', 'Generates systemic circulation pressure', 'Has thickest myocardial walls', 'Primary driver of cardiac output']
+    },
+    aorta: {
+      color: '#e67e22', name: 'Aorta',
+      desc: 'The largest artery in the body. It carries oxygenated blood from the left ventricle and distributes it through branches to all organs.',
+      facts: [{ val:'~2.5 cm', lbl:'Diameter' }, { val:'~40 cm', lbl:'Length' }, { val:'Elastic', lbl:'Wall Type' }, { val:'Systemic', lbl:'Circulation' }],
+      funcs: ['Carries oxygenated blood from heart', 'Branches to all major organs', 'Maintains diastolic pressure', 'Largest artery in the body']
+    },
+    pulmonaryArtery: {
+      color: '#9b59b6', name: 'Pulmonary Artery',
+      desc: 'The only artery carrying deoxygenated blood. It transports blood from the right ventricle to the lungs for gas exchange.',
+      facts: [{ val:'~3 cm', lbl:'Diameter' }, { val:'~15 mmHg', lbl:'Pressure' }, { val:'Dark Red', lbl:'Blood' }, { val:'To Lungs', lbl:'Direction' }],
+      funcs: ['Carries deoxygenated blood to lungs', 'Only artery without oxygenated blood', 'Bifurcates into left & right branches', 'Enables gas exchange in alveoli']
+    }
+  };
+
+  // ── STATE ──────────────────────────────────────────────────────────────────
+  let interiorOn = false;
+  let spinOn     = false;
+  let beatOn     = false;
+  let flowOn     = false;
+  let inVR       = false;
+  let autoId     = null;
+  let rotX = 0, rotY = 0;
+  let dragging = false, lastX = 0, lastY = 0;
+
+  // ── SHOW PART ──────────────────────────────────────────────────────────────
+  function showPart(key, btn) {
+    const p = PARTS[key];
+    if (!p) return;
+
+    // HTML overlay panel
+    const panel = document.getElementById('infoPanel');
+    panel.style.setProperty('--pc', p.color);
+    document.getElementById('infoDot').style.cssText = `background:${p.color}; box-shadow:0 0 8px ${p.color}`;
+    document.getElementById('infoDivider').style.background = `linear-gradient(to right, ${p.color}, transparent)`;
+    document.getElementById('infoName').textContent  = p.name;
+    document.getElementById('infoDesc').textContent  = p.desc;
+    document.getElementById('infoFacts').innerHTML   = p.facts.map(f =>
+      `<div class="fact-card"><span class="fact-val">${f.val}</span><span class="fact-lbl">${f.lbl}</span></div>`).join('');
+    document.getElementById('infoFuncs').innerHTML   = p.funcs.map(f => `<li>${f}</li>`).join('');
+    panel.classList.add('visible');
+
+    // Active button
+    document.querySelectorAll('.part-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+
+    // VR board
+    updateVRBoard(p);
+  }
+
+  function closePanel() {
+    document.getElementById('infoPanel').classList.remove('visible');
+    document.querySelectorAll('.part-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('vrBoard').setAttribute('visible', false);
+  }
+
+  function updateVRBoard(p) {
+    document.getElementById('vrName').setAttribute('value', p.name);
+    document.getElementById('vrDesc').setAttribute('value', p.desc.substring(0, 150) + (p.desc.length > 150 ? '…' : ''));
+    document.getElementById('vrFacts').setAttribute('value', p.facts.map(f => `${f.lbl}: ${f.val}`).join('  |  '));
+    document.getElementById('vrAccent').setAttribute('material', `color:${p.color}; opacity:1; shader:flat`);
+    if (inVR) document.getElementById('vrBoard').setAttribute('visible', true);
+  }
+
+  // ── INTERIOR LABELS & MODEL SWAP ───────────────────────────────────────────
+  function toggleInterior() {
+    interiorOn = !interiorOn;
+    
+    // Toggle labels
+    document.getElementById('labels3D').setAttribute('visible', interiorOn);
+    
+    // Swap 3D models (Exterior vs Interior)
+    document.getElementById('heartMesh').setAttribute('visible', !interiorOn);
+    document.getElementById('heartInteriorMesh').setAttribute('visible', interiorOn);
+
+    const btn = document.getElementById('btnInterior');
+    btn.classList.toggle('active', interiorOn);
+    btn.textContent = interiorOn ? '🔬 View Exterior' : '🔬 Interior View';
+    document.getElementById('interiorBadge').style.display = interiorOn ? 'block' : 'none';
+  }
+
+  // ── AUTO-ROTATE ────────────────────────────────────────────────────────────
+  function toggleSpin() {
+    spinOn = !spinOn;
+    spinOn ? startSpin() : stopSpin();
+    document.getElementById('btnSpin').classList.toggle('active', spinOn);
+  }
+  function startSpin() {
+    stopSpin();
+    autoId = setInterval(() => { rotY += 0.4; applyRot(); }, 16);
+  }
+  function stopSpin() {
+    if (autoId) { clearInterval(autoId); autoId = null; }
+  }
+
+  // ── HEARTBEAT & BLOOD FLOW ──────────────────────────────────────────────────
+  function toggleBeat() {
+    beatOn = !beatOn;
+    document.getElementById('btnBeat').classList.toggle('active', beatOn);
+    document.getElementById('heartMesh').setAttribute('heartbeat', 'active', beatOn);
+    document.getElementById('heartInteriorMesh').setAttribute('heartbeat', 'active', beatOn);
+  }
+
+  function toggleFlow() {
+    flowOn = !flowOn;
+    document.getElementById('btnFlow').classList.toggle('active', flowOn);
+    document.getElementById('bloodFlowSystem').setAttribute('blood-flow', 'active', flowOn);
+  }
+
+  // ── DRAG-TO-ROTATE ─────────────────────────────────────────────────────────
+  function applyRot() {
+    rotX = Math.max(-85, Math.min(85, rotX));
+    document.getElementById('heartPivot').setAttribute('rotation', `${rotX} ${rotY} 0`);
+  }
+
+  document.addEventListener('mousedown', e => {
+    if (e.button !== 0 || inVR) return;
+    // Don't drag when clicking UI elements
+    if (e.target.closest('#topbar, #partSelector, #infoPanel, #hint, #interiorBadge, #vrGuide')) return;
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    if (spinOn) stopSpin();
+    document.body.style.cursor = 'grabbing';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.cursor = 'default';
+    if (spinOn) startSpin();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    rotY += (e.clientX - lastX) * 0.45;
+    rotX += (e.clientY - lastY) * 0.45;
+    applyRot();
+    lastX = e.clientX; lastY = e.clientY;
+  });
+
+  // ── SCROLL TO ZOOM ─────────────────────────────────────────────────────────
+  let camZ = 3.2;
+  document.addEventListener('wheel', e => {
+    if (inVR) return;
+    e.preventDefault();
+    camZ = Math.max(1.4, Math.min(6.0, camZ + e.deltaY * 0.004));
+    document.getElementById('mainCamera').setAttribute('position', `0 0 ${camZ.toFixed(2)}`);
+  }, { passive: false });
+
+  // ── VR EVENTS ──────────────────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    const scene = document.querySelector('a-scene');
+    const cam   = document.getElementById('mainCamera');
+
+    scene.addEventListener('enter-vr', () => {
+      inVR = true;
+      // Attach VR board in front of camera
+      const board = document.getElementById('vrBoard');
+      cam.appendChild(board);
+      board.setAttribute('position', '0 -0.3 -1.5');
+      board.setAttribute('visible', false);
+      document.getElementById('topbar').style.display      = 'none';
+      document.getElementById('partSelector').style.display = 'none';
+      document.getElementById('infoPanel').style.display    = 'none';
+      document.getElementById('hint').style.display         = 'none';
+    });
+
+    scene.addEventListener('exit-vr', () => {
+      inVR = false;
+      // Return board to heartPivot
+      const board = document.getElementById('vrBoard');
+      document.getElementById('heartPivot').appendChild(board);
+      board.setAttribute('visible', false);
+      document.getElementById('topbar').style.display      = '';
+      document.getElementById('partSelector').style.display = '';
+      document.getElementById('hint').style.display         = '';
+    });
+
+    // Label + heart click events
+    scene.addEventListener('loaded', () => {
+      document.querySelectorAll('.label-entity').forEach(el => {
+        el.addEventListener('click', () => {
+          const btn = document.querySelector(`.part-btn[onclick*="${el.dataset.part}"]`);
+          showPart(el.dataset.part, btn);
+        });
+      });
+      document.getElementById('heartMesh').addEventListener('click', () => {
+        if (!document.getElementById('infoPanel').classList.contains('visible')) {
+          // Show heart overview
+          const p = {
+            color: '#ff4466', name: 'Human Heart',
+            desc: 'A fist-sized muscular organ that pumps blood through the body. It beats ~100,000 times/day, circulating ~5 L of blood per minute through four chambers.',
+            facts: [{ val:'~300 g', lbl:'Weight' }, { val:'72 bpm', lbl:'Avg Rate' }, { val:'5 L/min', lbl:'Output' }, { val:'4', lbl:'Chambers' }],
+            funcs: ['Pump oxygenated blood to the body', 'Return deoxygenated blood to lungs', 'Maintain blood pressure', 'Regulate heartbeat via SA node']
+          };
+          showPart.__overview = true;
+          // Inline show for overview
+          const panel = document.getElementById('infoPanel');
+          panel.style.setProperty('--pc', p.color);
+          document.getElementById('infoDot').style.cssText = `background:${p.color}; box-shadow:0 0 8px ${p.color}`;
+          document.getElementById('infoDivider').style.background = `linear-gradient(to right, ${p.color}, transparent)`;
+          document.getElementById('infoName').textContent = p.name;
+          document.getElementById('infoDesc').textContent = p.desc;
+          document.getElementById('infoFacts').innerHTML  = p.facts.map(f => `<div class="fact-card"><span class="fact-val">${f.val}</span><span class="fact-lbl">${f.lbl}</span></div>`).join('');
+          document.getElementById('infoFuncs').innerHTML  = p.funcs.map(f => `<li>${f}</li>`).join('');
+          panel.classList.add('visible');
+          updateVRBoard(p);
+        }
+      });
+
+      // Also add click event for the interior mesh to open overview
+      document.getElementById('heartInteriorMesh').addEventListener('click', () => {
+        document.getElementById('heartMesh').click();
+      });
+
+      // Set cursor style on canvas area
+      document.querySelector('canvas').style.cursor = 'grab';
+    });
+  });
+
+  // ── VR GUIDE ──────────────────────────────────────────────────────────────
+  function showVRGuide() {
+    const g = document.getElementById('vrGuide');
+    g.style.display = g.style.display === 'block' ? 'none' : 'block';
+  }
+  </script>
+</body>
+</html>
