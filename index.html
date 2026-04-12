@@ -686,7 +686,7 @@
   }
   function startSpin() {
     stopSpin();
-    autoId = setInterval(() => { rotY += 0.4; applyRot(); }, 16);
+    autoId = setInterval(() => { rotY += 0.65; applyRot(); }, 16);
   }
   function stopSpin() {
     if (autoId) { clearInterval(autoId); autoId = null; }
