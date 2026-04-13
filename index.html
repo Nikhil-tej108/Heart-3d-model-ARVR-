@@ -93,7 +93,8 @@
 
           const box = new THREE.Box3().setFromObject(obj);
           const dim = box.getSize(new THREE.Vector3());
-          const s = this.data.size / Math.max(dim.x, dim.y, dim.z);
+          const s = this.data.size / Math.max(dim.x, dim.y, dim.z, 0.001);
+          if (!isFinite(s) || isNaN(s)) return;
           this.el.object3D.scale.setScalar(s);
           const c = box.getCenter(new THREE.Vector3()).multiplyScalar(-s);
           this.el.object3D.position.copy(c);
@@ -116,18 +117,25 @@
       padding: 0;
     }
 
-    body {
+    html, body {
       font-family: 'Inter', sans-serif;
       background: #0e1117;
       overflow: hidden;
-      width: 100vw;
-      height: 100vh;
+      width: 100%;
+      height: 100%;
+      position: fixed;
+      touch-action: none;
     }
 
     /* A-Frame canvas fills entire screen */
     a-scene {
-      width: 100vw;
-      height: 100vh;
+      display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 100;
     }
 
     /* ── TOP BAR ── */
@@ -212,7 +220,7 @@
       display: flex;
       flex-direction: column;
       gap: 6px;
-      z-index: 400;
+      z-index: 500;
     }
 
     .part-btn {
@@ -264,7 +272,7 @@
       border-radius: 12px;
       padding: 18px;
       backdrop-filter: blur(16px);
-      z-index: 400;
+      z-index: 500;
       display: none;
       animation: slideIn 0.22s ease;
     }
@@ -470,7 +478,7 @@
       font-size: 0.68rem;
       letter-spacing: 1px;
       display: none;
-      z-index: 400;
+      z-index: 500;
     }
 
     /* ── VR HOW-TO BADGE ── */
