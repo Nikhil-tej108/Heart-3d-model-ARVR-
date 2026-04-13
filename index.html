@@ -365,6 +365,78 @@
     /* scrollbar */
     #infoPanel::-webkit-scrollbar { width: 4px; }
     #infoPanel::-webkit-scrollbar-thumb { background: rgba(255,50,80,0.2); border-radius: 2px; }
+
+    /* ── RESPONSIVE / MOBILE ── */
+    @media (max-width: 768px) {
+      #topbar {
+        height: auto;
+        min-height: 54px;
+        flex-direction: column;
+        padding: 8px 10px;
+        gap: 8px;
+      }
+      #topbar > div {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 6px;
+      }
+      .tbtn {
+        margin-left: 0;
+        padding: 6px 10px;
+        font-size: 0.7rem;
+      }
+      
+      #partSelector {
+        top: auto;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center;
+        width: 100%;
+        gap: 4px;
+        padding: 0 10px;
+      }
+      .part-btn {
+        padding: 6px 10px;
+        font-size: 0.7rem;
+        border-left: 1px solid rgba(255,255,255,0.08);
+        border-bottom: 2px solid var(--clr);
+        border-radius: 6px;
+      }
+      
+      #infoPanel {
+        top: auto;
+        bottom: 120px;
+        left: 50%;
+        transform: translateX(-50%);
+        right: auto;
+        width: 90%;
+        max-width: 340px;
+        background: rgba(8,10,20,0.98);
+        padding: 14px;
+        animation: popUp 0.25s ease;
+      }
+      #infoPanel.visible {
+        /* Reset transform if animation doesn't use it, but since we are transforming left and top, we need to match it */
+        transform: translateX(-50%);
+      }
+      @keyframes popUp {
+        from { opacity: 0; transform: translate(-50%, 16px); }
+        to   { opacity: 1; transform: translate(-50%, 0); }
+      }
+      
+      #interiorBadge {
+        top: 100px;
+        right: auto;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+      
+      #hint { display: none; }
+    }
   </style>
 </head>
 <body>
@@ -627,6 +699,12 @@
     const p = PARTS[key];
     if (!p) return;
 
+    // Toggle off if clicking the already active button
+    if (btn && btn.classList.contains('active')) {
+      closePanel();
+      return;
+    }
+
     // HTML overlay panel
     const panel = document.getElementById('infoPanel');
     panel.style.setProperty('--pc', p.color);
@@ -708,31 +786,56 @@
 
   // ── DRAG-TO-ROTATE ─────────────────────────────────────────────────────────
   function applyRot() {
-    rotX = Math.max(-85, Math.min(85, rotX));
+    // Restricting rotX prevents the model from flipping completely upside-down 
+    // and causing backwards rotation or losing sight of the model in empty space.
+    rotX = Math.max(-90, Math.min(90, rotX));
     document.getElementById('heartPivot').setAttribute('rotation', `${rotX} ${rotY} 0`);
   }
 
-  document.addEventListener('mousedown', e => {
-    if (e.button !== 0 || inVR) return;
-    // Don't drag when clicking UI elements
-    if (e.target.closest('#topbar, #partSelector, #infoPanel, #hint, #interiorBadge, #vrGuide')) return;
-    dragging = true; lastX = e.clientX; lastY = e.clientY;
+  function handleDragStart(x, y, target) {
+    if (inVR) return;
+    if (target && target.closest('#topbar, #partSelector, #infoPanel, #hint, #interiorBadge, #vrGuide')) return;
+    dragging = true; 
+    lastX = x; 
+    lastY = y;
     if (spinOn) stopSpin();
     document.body.style.cursor = 'grabbing';
-  });
-  document.addEventListener('mouseup', () => {
+  }
+
+  function handleDragMove(x, y) {
+    if (!dragging) return;
+    rotY += (x - lastX) * 0.45;
+    rotX += (y - lastY) * 0.45;
+    applyRot();
+    lastX = x; 
+    lastY = y;
+  }
+
+  function handleDragEnd() {
     if (!dragging) return;
     dragging = false;
     document.body.style.cursor = 'default';
     if (spinOn) startSpin();
-  });
-  document.addEventListener('mousemove', e => {
-    if (!dragging) return;
-    rotY += (e.clientX - lastX) * 0.45;
-    rotX += (e.clientY - lastY) * 0.45;
-    applyRot();
-    lastX = e.clientX; lastY = e.clientY;
-  });
+  }
+
+  // Mouse Events
+  document.addEventListener('mousedown', e => { if (e.button === 0) handleDragStart(e.clientX, e.clientY, e.target); });
+  document.addEventListener('mousemove', e => handleDragMove(e.clientX, e.clientY));
+  document.addEventListener('mouseup', handleDragEnd);
+
+  // Touch Events for Mobile
+  document.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) handleDragStart(e.touches[0].clientX, e.touches[0].clientY, e.target);
+  }, { passive: false });
+  
+  document.addEventListener('touchmove', e => {
+    if (dragging && e.touches.length === 1) {
+      e.preventDefault(); // Prevents mobile browser pull-to-refresh and scrolling away from the canvas
+      handleDragMove(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }, { passive: false });
+  
+  document.addEventListener('touchend', handleDragEnd);
 
   // ── SCROLL TO ZOOM ─────────────────────────────────────────────────────────
   let camZ = 3.2;
