@@ -81,16 +81,7 @@
           const obj = this.el.getObject3D('mesh');
           if (!obj) return;
 
-          // Force double-sided rendering to fix hollow/invisible backface issues
-          obj.traverse((node) => {
-            if (node.isMesh && node.material) {
-              node.material.side = THREE.DoubleSide;
-              if (Array.isArray(node.material)) {
-                node.material.forEach(m => m.side = THREE.DoubleSide);
-              }
-            }
-          });
-
+          // Removed DoubleSide forcing as it doubles vertex load and commonly crashes mobile WebGL
           const box = new THREE.Box3().setFromObject(obj);
           const dim = box.getSize(new THREE.Vector3());
           const s = this.data.size / Math.max(dim.x, dim.y, dim.z, 0.001);
@@ -675,7 +666,7 @@
        A-FRAME SCENE — embedded fills the page
   ══════════════════════════════════════════ -->
   <a-scene cursor="rayOrigin: mouse" raycaster="objects: .clickable, .label-entity; far: 30" vr-mode-ui="enabled: true"
-    loading-screen="enabled: false" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true"
+    loading-screen="enabled: false"
     webxr="optionalFeatures: local-floor,bounded-floor,hand-tracking" embedded>
 
     <a-assets timeout="90000">
@@ -688,12 +679,10 @@
     <a-sky color="#0e1117"></a-sky>
 
     <!-- ── LIGHTING STUDIO RIG (Optimized for Mobile WebGL limits) ── -->
+    <!-- Reduced to absolute minimum 3 static lights to guarantee shader compilation on mobile (Peak 7 lights with blood flow) -->
     <a-entity light="type:hemisphere; color:#c8c0b8; groundColor:#3a0008; intensity:0.85"></a-entity>
     <a-entity light="type:directional; color:#fff5e8; intensity:2.8; castShadow:true" position="-3 5 4"></a-entity>
-    <!-- Combined point lights to stay well under the 8-light mobile limit when blood-flow adds 4 more -->
     <a-entity light="type:point; color:#ffffff; intensity:3; distance:7; decay:1.5" position="0 0.5 3.5"></a-entity>
-    <a-entity light="type:point; color:#ffaa55; intensity:2; distance:8; decay:1.8" position="-3 1 1"></a-entity>
-    <a-entity light="type:point; color:#5577ff; intensity:1.5; distance:8; decay:2" position="2 -1 -2"></a-entity>
 
     <!-- ── HEART PIVOT ── -->
     <a-entity id="heartPivot" position="0 0 0">
