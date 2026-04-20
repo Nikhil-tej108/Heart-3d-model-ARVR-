@@ -4,95 +4,256 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Heart Anatomy Explorer</title>
+  <meta name="description" content="Interactive 3D Heart Anatomy Explorer with beating heart animation, blood flow simulation, and AR/VR support for biology education.">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
   <script>
-    // Component to simulate realistic lub-dub heart beat scaling
-    AFRAME.registerComponent('heartbeat', {
-      schema: { active: { default: false }, baseScale: { default: 1 } },
-      tick: function (time) {
-        if (!this.data.active) {
-          this.el.object3D.scale.setScalar(this.data.baseScale);
-          return;
+    // ── A-FRAME COMPONENTS ────────────────────────────────────────────────────
+
+    // ── Ultra-Immersive "Red Blood Cell Journey" ──
+    AFRAME.registerComponent('blood-journey', {
+      schema: { active: { default: false } },
+      init: function () {
+        this.rig = document.getElementById('rig');
+        
+        // Milestones of the educational journey
+        this.milestones = [
+          { p: 0.00, txt: "Approaching Heart via Superior Vena Cava" },
+          { p: 0.06, txt: "Entering Right Atrium (Deoxygenated)" },
+          { p: 0.14, txt: "Passing Tricuspid Valve into Right Ventricle" },
+          { p: 0.22, txt: "Pumping up into Pulmonary Artery" },
+          { p: 0.32, txt: "Traveling to Lungs for Oxygenation..." },
+          { p: 0.45, txt: "Returning via Pulmonary Veins (Oxygenated)" },
+          { p: 0.55, txt: "Entering Left Atrium" },
+          { p: 0.65, txt: "Passing Mitral Valve into Left Ventricle" },
+          { p: 0.75, txt: "Ejected violently into the Aorta!" },
+          { p: 0.85, txt: "Starting Systemic Circulation to the Body" }
+        ];
+
+        // 3D Path through the chambers based on autoscale 1.5 units
+        this.pts = [
+          new THREE.Vector3(0, 0, 4.0),           // 0.00 Start outside
+          new THREE.Vector3(0.38, 1.2, 0.1),      // 0.06 Vena Cava
+          new THREE.Vector3(0.38, 0.45, 0.3),     // 0.14 Right Atrium
+          new THREE.Vector3(0.45, -0.35, 0.2),    // 0.22 Right Ventricle
+          new THREE.Vector3(0.2, 0.7, 0.4),       // 0.32 Pulm Artery
+          new THREE.Vector3(1.5, 1.5, 1.0),       // 0.45 out to lungs (right side)
+          new THREE.Vector3(-1.5, 1.5, 1.0),      // cross to left side
+          new THREE.Vector3(-0.4, 1.0, 0.1),      // Pulm Vein
+          new THREE.Vector3(-0.4, 0.45, 0.3),     // Left Atrium
+          new THREE.Vector3(-0.45, -0.35, 0.2),   // Left Ventricle
+          new THREE.Vector3(-0.15, 0.7, 0.4),     // Aorta
+          new THREE.Vector3(-0.5, 2.5, 2.0),      // Shoot out body
+          new THREE.Vector3(0, 0, 4.0)            // Back to start
+        ];
+        
+        this.curve = new THREE.CatmullRomCurve3(this.pts, true);
+        this.progress = 0;
+      },
+      update: function(oldData) {
+        if (this.data.active && !oldData.active) {
+          this.progress = 0;
+          this.pts[0].z = window._camZ || 4.0;
+          this.pts[12].z = window._camZ || 4.0;
+          this.curve = new THREE.CatmullRomCurve3(this.pts, true);
+          document.getElementById('journeyOverlay').style.opacity = '1';
+          document.getElementById('journeyOverlay').style.pointerEvents = 'auto'; // allow clicking exit
+
+          // 1. Widen FOV so it feels less constrained (like a wide-angle GoPro)
+          document.getElementById('mainCamera').setAttribute('camera', 'fov', 90);
+
+          // 2. Add an Explorer Headlamp to light up the dark interior chambers
+          if (!this.headlamp) {
+            this.headlamp = document.createElement('a-entity');
+            // A warm, bright light that reaches just far enough to light the walls
+            this.headlamp.setAttribute('light', 'type: point; color: #ffebf0; intensity: 12; distance: 2.5; decay: 2');
+            document.getElementById('mainCamera').appendChild(this.headlamp);
+          }
+          this.headlamp.setAttribute('visible', true);
+
+          // 3. X-Ray Ghost Mode: Make the heart walls 50% transparent glass
+          const mesh = document.getElementById('heartMesh').getObject3D('mesh');
+          this.origMats = [];
+          if (mesh) {
+            mesh.traverse(n => {
+              if (n.isMesh && n.material) {
+                this.origMats.push({ node: n, mat: n.material });
+                const ghostMat = n.material.clone();
+                ghostMat.transparent = true;
+                ghostMat.opacity = 0.45;      // See through the exterior walls!
+                ghostMat.side = THREE.DoubleSide; // Ensure interiors compile visually
+                n.material = ghostMat;
+                n.ghostMat = ghostMat;
+              }
+            });
+          }
+
+        } else if (!this.data.active && oldData.active) {
+          document.getElementById('journeyOverlay').style.opacity = '0';
+          document.getElementById('journeyOverlay').style.pointerEvents = 'none';
+          this.rig.object3D.position.set(0, 0, window._camZ || 4.0);
+
+          // Restore original visual settings
+          document.getElementById('mainCamera').setAttribute('camera', 'fov', 65);
+          if (this.headlamp) this.headlamp.setAttribute('visible', false);
+
+          if (this.origMats) {
+            this.origMats.forEach(item => {
+              if (item.node.ghostMat) item.node.ghostMat.dispose();
+              item.node.material = item.mat;
+            });
+          }
         }
-        // 1000ms heartbeat cycle. "Lub" at 0-150ms, "Dub" at 300-450ms.
-        let t = (time % 1000) / 1000;
-        let s = this.data.baseScale;
-        if (t < 0.15) {
-          s += Math.sin(t * Math.PI / 0.15) * (0.05 * this.data.baseScale);
-        } else if (t > 0.3 && t < 0.45) {
-          s += Math.sin((t - 0.3) * Math.PI / 0.15) * (0.06 * this.data.baseScale);
+      },
+      tick: function (time, delta) {
+        if (!this.data.active) return;
+        
+        // Speed of the ride
+        this.progress += (0.0007 * (delta/16));
+        if (this.progress > 1) this.progress = 0;
+        
+        // Read milestone text
+        let currentText = "Preparing Journey...";
+        for (let i = 0; i < this.milestones.length; i++) {
+          if (this.progress >= this.milestones[i].p) {
+            currentText = this.milestones[i].txt;
+          }
         }
-        this.el.object3D.scale.setScalar(s);
+        document.getElementById('journeyText').innerText = currentText;
+
+        // Move camera rig smoothly along the path
+        const pos = this.curve.getPoint(this.progress);
+        this.rig.object3D.position.copy(pos);
       }
     });
 
-    // Component to simulate blood flow sweeping across the heart surface
-    AFRAME.registerComponent('blood-flow', {
+    // Billboard component: Makes internal 3D labels always face the camera rig
+    AFRAME.registerComponent('billboard', {
+      tick: function () {
+        const cam = this.el.sceneEl.camera;
+        if (!cam) return;
+        this.el.object3D.lookAt(cam.getWorldPosition(new THREE.Vector3()));
+      }
+    });
+
+    // Restored 3D Particle Simulation with correctly aligned internal splines
+    AFRAME.registerComponent('blood-particles', {
       schema: { active: { default: false } },
       init: function () {
-        this.lights = [];
-        const colors = ['#0077ff', '#0077ff', '#ff0033', '#ff0033']; // Blue and Red flow
-        for (let i = 0; i < 4; i++) {
-          let l = document.createElement('a-entity');
-          // High intensity point lights to wash over the heart's surface textures
-          l.setAttribute('light', `type:point; color:${colors[i]}; intensity:25; distance:1.4; decay:2`);
-          this.el.appendChild(l);
-          this.lights.push(l);
+        this.particles = [];
+        
+        // Anatomical paths aligned precisely with the labels so they flow *inside* the model
+        this.paths = {
+          blue: [ // Deoxygenated: Superior Vena Cava -> RA -> RV -> Pulmonary Artery
+            new THREE.Vector3(0.38, 1.0, 0.1),
+            new THREE.Vector3(0.38, 0.45, 0.3),
+            new THREE.Vector3(0.45, -0.35, 0.2),
+            new THREE.Vector3(0.2, 0.7, 0.4)
+          ],
+          red: [ // Oxygenated: Pulmonary Veins -> LA -> LV -> Aorta
+            new THREE.Vector3(-0.4, 1.0, 0.1),
+            new THREE.Vector3(-0.4, 0.45, 0.3),
+            new THREE.Vector3(-0.45, -0.35, 0.2),
+            new THREE.Vector3(-0.15, 0.7, 0.4)
+          ]
+        };
+        
+        this.curveBlue = new THREE.CatmullRomCurve3(this.paths.blue);
+        this.curveRed  = new THREE.CatmullRomCurve3(this.paths.red);
+
+        // Pre-create highly vibrant dots pooling
+        const geoRed = new THREE.SphereGeometry(0.03, 8, 8);
+        const geoBlue = new THREE.SphereGeometry(0.025, 8, 8);
+        
+        // Super bright Basic materials
+        const matBlue = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.95, depthWrite: false });
+        const matRed  = new THREE.MeshBasicMaterial({ color: 0xff0055, transparent: true, opacity: 0.95, depthWrite: false });
+
+        for (let i = 0; i < 70; i++) {
+          const isRed = i % 2 === 0;
+          const mesh = new THREE.Mesh(isRed ? geoRed : geoBlue, isRed ? matRed.clone() : matBlue.clone());
+          mesh.visible = false;
+          this.el.object3D.add(mesh);
+          
+          this.particles.push({
+            mesh: mesh,
+            isRed: isRed,
+            progress: Math.random(),
+            speed: 0.005 + (Math.random() * 0.007),
+            offset: new THREE.Vector3((Math.random()-0.5)*0.15, (Math.random()-0.5)*0.15, (Math.random()-0.5)*0.15)
+          });
         }
       },
-      tick: function (time) {
+      tick: function (time, delta) {
         if (!this.data.active) {
-          if (this.lights[0].getAttribute('visible')) {
-            this.lights.forEach(l => l.setAttribute('visible', false));
+          if (this.particles[0] && this.particles[0].mesh.visible) {
+            this.particles.forEach(p => p.mesh.visible = false);
           }
           return;
         }
-        if (!this.lights[0].getAttribute('visible')) {
-          this.lights.forEach(l => l.setAttribute('visible', true));
-        }
+        
+        // Animate particles along the internal splines
+        this.particles.forEach(p => {
+          p.mesh.visible = true;
+          
+          p.progress += p.speed;
+          if (p.progress > 1) { 
+            p.progress = 0;
+            p.offset.set((Math.random()-0.5)*0.15, (Math.random()-0.5)*0.15, (Math.random()-0.5)*0.15);
+          }
+          
+          const curve = p.isRed ? this.curveRed : this.curveBlue;
+          const pos = curve.getPoint(p.progress);
+          
+          const mat = p.mesh.material;
+          if (p.progress < 0.1) mat.opacity = (p.progress / 0.1) * 0.95;
+          else if (p.progress > 0.9) mat.opacity = ((1 - p.progress) / 0.1) * 0.95;
+          else mat.opacity = 0.95;
 
-        // Cycle time: 1.8 seconds for dynamic rapid flow
-        let cycle = 1800;
-
-        // 1. Blue flow IN (Vena Cava -> RV)
-        let p1 = (time % cycle) / cycle;
-        this.lights[0].object3D.position.set(0.85, 1.4 - (p1 * 2.2), -0.1);
-
-        // 2. Blue flow OUT (RV -> Pulmonary Artery)
-        let p2 = ((time + cycle / 2) % cycle) / cycle;
-        this.lights[1].object3D.position.set(0.7 - (p2 * 0.35), -0.8 + (p2 * 2.2), 0.2);
-
-        // 3. Red flow IN (Lungs -> LV)
-        let p3 = ((time + 200) % cycle) / cycle;
-        this.lights[2].object3D.position.set(-0.95, 0.8 - (p3 * 1.8), -0.1);
-
-        // 4. Red flow OUT (LV -> Aorta)
-        let p4 = ((time + (cycle / 2) + 200) % cycle) / cycle;
-        this.lights[3].object3D.position.set(-0.7 + (p4 * 0.45), -1.0 + (p4 * 2.6), 0.2);
+          p.mesh.position.copy(pos).add(p.offset);
+          
+          // Pulsations
+          const scale = 1 + Math.sin(time * 0.01 + p.progress * 15) * 0.3;
+          p.mesh.scale.setScalar(scale);
+        });
       }
     });
 
-    // Auto-scale heart to target world-unit size
+    // Robust Auto-scale: Measures the model's actual size and shrinks/grows it to fit 1.5 units
     AFRAME.registerComponent('autoscale', {
-      schema: { size: { type: 'number', default: 1.6 } },
+      schema: { size: { type: 'number', default: 1.5 } },
       init() {
         this.el.addEventListener('model-loaded', () => {
-          const obj = this.el.getObject3D('mesh');
-          if (!obj) return;
-
-          // Removed DoubleSide forcing as it doubles vertex load and commonly crashes mobile WebGL
+          const obj = this.el.object3D;
+          // Force a world matrix update to get accurate bounds
+          obj.updateMatrixWorld(true);
+          
           const box = new THREE.Box3().setFromObject(obj);
-          const dim = box.getSize(new THREE.Vector3());
-          const s = this.data.size / Math.max(dim.x, dim.y, dim.z, 0.001);
-          if (!isFinite(s) || isNaN(s)) return;
-          this.el.object3D.scale.setScalar(s);
-          const c = box.getCenter(new THREE.Vector3()).multiplyScalar(-s);
-          this.el.object3D.position.copy(c);
-
-          // Apply heartbeat component instead of static pulse animation
-          this.el.setAttribute('heartbeat', `baseScale: ${s}; active: false`);
-
+          const size = box.getSize(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z, 0.01);
+          
+          // Calculate scale factor to make the largest dimension equal to this.data.size
+          const scaleFactor = this.data.size / maxDim;
+          obj.scale.set(scaleFactor, scaleFactor, scaleFactor);
+          
+          // Center the model so it rotates around its true center
+          const center = box.getCenter(new THREE.Vector3());
+          obj.position.set(
+            -center.x * scaleFactor,
+            -center.y * scaleFactor,
+            -center.z * scaleFactor
+          );
+          
+          // Make sure animation mixer plays at correct speed once turned on
+          this.el.setAttribute('animation-mixer', 'clip: *; timeScale: 0; crossFadeDuration: 0.2');
+          
+          // Position camera at a safe distance (Size * 2.5)
+          const targetDist = this.data.size * 2.5;
+          const rigEl = document.getElementById('rig');
+          rigEl.setAttribute('position', `0 0 ${targetDist.toFixed(2)}`);
+          window._camZ = targetDist;
+          
           document.getElementById('loading').style.display = 'none';
         });
       }
@@ -100,9 +261,7 @@
   </script>
 
   <style>
-    *,
-    *::before,
-    *::after {
+    *, *::before, *::after {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
@@ -171,10 +330,7 @@
     }
 
     @keyframes hb {
-      to {
-        transform: scale(1.08);
-        box-shadow: 0 0 20px rgba(255, 50, 80, 0.9);
-      }
+      to { transform: scale(1.08); box-shadow: 0 0 20px rgba(255, 50, 80, 0.9); }
     }
 
     .tbtn {
@@ -192,10 +348,7 @@
       margin-left: 8px;
     }
 
-    .tbtn:hover {
-      background: rgba(255, 50, 80, 0.25);
-      color: #fff;
-    }
+    .tbtn:hover { background: rgba(255, 50, 80, 0.25); color: #fff; }
 
     .tbtn.active {
       background: rgba(255, 50, 80, 0.38);
@@ -203,7 +356,7 @@
       border-color: #ff4466;
     }
 
-    /* ── PART SELECTOR (left) ── */
+    /* ── PART SELECTOR (left panel) ── */
     #partSelector {
       position: fixed;
       top: 72px;
@@ -232,10 +385,7 @@
       white-space: nowrap;
     }
 
-    .part-btn:hover {
-      background: rgba(255, 255, 255, 0.08);
-      color: #dde;
-    }
+    .part-btn:hover { background: rgba(255, 255, 255, 0.08); color: #dde; }
 
     .part-btn.active {
       background: rgba(255, 255, 255, 0.12);
@@ -252,6 +402,61 @@
       flex-shrink: 0;
     }
 
+    /* ── JOURNEY OVERLAY ── */
+    #journeyOverlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 550;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: center;
+      padding-bottom: 80px;
+      opacity: 0;
+      transition: opacity 1.5s ease;
+      background: radial-gradient(circle, rgba(255,0,50,0) 40%, rgba(255,0,50,0.15) 100%);
+    }
+
+    #journeyText {
+      background: rgba(10, 0, 0, 0.85);
+      border: 1px solid rgba(255, 50, 80, 0.4);
+      color: #fff;
+      padding: 14px 28px;
+      border-radius: 30px;
+      font-size: 1.15rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      backdrop-filter: blur(12px);
+      text-align: center;
+      box-shadow: 0 4px 25px rgba(255,0,50,0.5);
+      max-width: 90%;
+    }
+    
+    @media (max-width: 768px) {
+       #journeyText {
+         font-size: 0.9rem;
+         padding: 10px 20px;
+       }
+       #journeyOverlay {
+         padding-bottom: 100px;
+       }
+    }
+    
+    #journeyExit {
+      margin-top: 20px;
+      padding: 6px 14px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      color: #fff;
+      border-radius: 20px;
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.8rem;
+      transition: background 0.2s;
+    }
+    #journeyExit:hover { background: rgba(255, 255, 255, 0.25); }
+
     /* ── INFO PANEL (right drawer) ── */
     #infoPanel {
       position: fixed;
@@ -266,22 +471,15 @@
       z-index: 500;
       display: none;
       animation: slideIn 0.22s ease;
+      overflow-y: auto;
+      max-height: calc(100vh - 80px);
     }
 
-    #infoPanel.visible {
-      display: block;
-    }
+    #infoPanel.visible { display: block; }
 
     @keyframes slideIn {
-      from {
-        opacity: 0;
-        transform: translateX(16px);
-      }
-
-      to {
-        opacity: 1;
-        transform: translateX(0);
-      }
+      from { opacity: 0; transform: translateX(16px); }
+      to   { opacity: 1; transform: translateX(0); }
     }
 
     .info-top {
@@ -305,11 +503,7 @@
       box-shadow: 0 0 8px var(--pc, #ff4466);
     }
 
-    .info-name {
-      font-size: 1rem;
-      font-weight: 700;
-      color: #fff;
-    }
+    .info-name { font-size: 1rem; font-weight: 700; color: #fff; }
 
     .close-x {
       background: none;
@@ -319,10 +513,7 @@
       cursor: pointer;
       line-height: 1;
     }
-
-    .close-x:hover {
-      color: #eee;
-    }
+    .close-x:hover { color: #eee; }
 
     .divider {
       height: 1px;
@@ -381,9 +572,7 @@
       margin-bottom: 8px;
     }
 
-    .funcs-box ul {
-      list-style: none;
-    }
+    .funcs-box ul { list-style: none; }
 
     .funcs-box li {
       font-size: 0.76rem;
@@ -394,9 +583,7 @@
       gap: 7px;
     }
 
-    .funcs-box li:last-child {
-      border-bottom: none;
-    }
+    .funcs-box li:last-child { border-bottom: none; }
 
     .funcs-box li::before {
       content: '▸';
@@ -404,7 +591,7 @@
       flex-shrink: 0;
     }
 
-    /* ── LOADING ── */
+    /* ── LOADING OVERLAY ── */
     #loading {
       position: fixed;
       inset: 0;
@@ -412,7 +599,7 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      background: rgba(14, 17, 23, 0.9);
+      background: rgba(14, 17, 23, 0.95);
       z-index: 600;
       gap: 14px;
     }
@@ -426,19 +613,11 @@
       animation: spin 1s linear infinite;
     }
 
-    @keyframes spin {
-      to {
-        transform: rotate(360deg);
-      }
-    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
-    .load-text {
-      font-size: 0.78rem;
-      color: #445;
-      letter-spacing: 1px;
-    }
+    .load-text { font-size: 0.78rem; color: #889; letter-spacing: 1px; }
 
-    /* ── HINT ── */
+    /* ── BOTTOM HINT ── */
     #hint {
       position: fixed;
       bottom: 16px;
@@ -454,22 +633,6 @@
       z-index: 400;
       pointer-events: none;
       white-space: nowrap;
-    }
-
-    /* ── INTERIOR BADGE ── */
-    #interiorBadge {
-      position: fixed;
-      top: 62px;
-      right: 330px;
-      background: rgba(0, 200, 255, 0.1);
-      border: 1px solid rgba(0, 200, 255, 0.3);
-      color: #00eeff;
-      border-radius: 6px;
-      padding: 5px 12px;
-      font-size: 0.68rem;
-      letter-spacing: 1px;
-      display: none;
-      z-index: 500;
     }
 
     /* ── VR HOW-TO BADGE ── */
@@ -490,15 +653,26 @@
       line-height: 1.5;
     }
 
-    /* scrollbar */
-    #infoPanel::-webkit-scrollbar {
-      width: 4px;
+    /* ── CHAMBER BADGE (shown when chambers labels are visible) ── */
+    #chamberBadge {
+      position: fixed;
+      top: 62px;
+      right: 16px;
+      background: rgba(0, 200, 255, 0.1);
+      border: 1px solid rgba(0, 200, 255, 0.3);
+      color: #00eeff;
+      border-radius: 6px;
+      padding: 5px 12px;
+      font-size: 0.68rem;
+      letter-spacing: 1px;
+      display: none;
+      z-index: 500;
+      pointer-events: none;
     }
 
-    #infoPanel::-webkit-scrollbar-thumb {
-      background: rgba(255, 50, 80, 0.2);
-      border-radius: 2px;
-    }
+    /* Scrollbar */
+    #infoPanel::-webkit-scrollbar { width: 4px; }
+    #infoPanel::-webkit-scrollbar-thumb { background: rgba(255, 50, 80, 0.2); border-radius: 2px; }
 
     /* ── RESPONSIVE / MOBILE ── */
     @media (max-width: 768px) {
@@ -506,22 +680,21 @@
         height: auto;
         min-height: 54px;
         flex-direction: column;
-        padding: 8px 10px;
-        gap: 8px;
+        padding: 5px 10px;
+        gap: 5px;
+        background: rgba(10, 12, 18, 0.98);
       }
 
-      #topbar>div {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: center;
-        gap: 6px;
+      .logo { display: none; }
+
+      #topbar > div {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 4px;
+        width: 100%;
       }
 
-      .tbtn {
-        margin-left: 0;
-        padding: 6px 10px;
-        font-size: 0.7rem;
-      }
+      .tbtn { margin: 0 !important; padding: 6px 2px !important; font-size: 0.65rem !important; width: 100%; text-align: center; }
 
       #partSelector {
         top: auto;
@@ -546,88 +719,77 @@
 
       #infoPanel {
         top: auto;
-        bottom: 120px;
-        left: 50%;
-        transform: translateX(-50%);
-        right: auto;
-        width: 90%;
-        max-width: 340px;
-        background: rgba(8, 10, 20, 0.98);
-        padding: 14px;
-        animation: popUp 0.25s ease;
+        left: 0;
+        right: 0;
+        bottom: -100%;
+        width: 100%;
+        max-width: none;
+        height: 60%;
+        border-radius: 20px 20px 0 0;
+        border: none;
+        border-top: 2px solid rgba(255, 50, 80, 0.4);
+        transform: translate(0, 0);
+        margin: 0;
+        padding-bottom: 30px;
+        transition: bottom 0.4s cubic-bezier(0.1, 0.9, 0.2, 1);
       }
 
-      #infoPanel.visible {
-        /* Reset transform if animation doesn't use it, but since we are transforming left and top, we need to match it */
-        transform: translateX(-50%);
+      #infoPanel.visible { 
+        display: block;
+        bottom: 0;
+        right: 0;
+        transform: translate(0, 0);
       }
 
-      @keyframes popUp {
-        from {
-          opacity: 0;
-          transform: translate(-50%, 16px);
-        }
-
-        to {
-          opacity: 1;
-          transform: translate(-50%, 0);
-        }
-      }
-
-      #interiorBadge {
-        top: 100px;
+      #chamberBadge {
+        top: auto;
+        bottom: 200px;
         right: auto;
         left: 50%;
         transform: translateX(-50%);
       }
 
-      #hint {
-        display: none;
-      }
+      #hint { display: none; }
     }
   </style>
 </head>
-
 <body>
 
   <!-- LOADING OVERLAY -->
   <div id="loading">
     <div class="load-ring"></div>
-    <div class="load-text">Loading Heart Model…</div>
+    <div class="load-text">Loading Beating Heart…</div>
   </div>
 
-  <!-- TOP BAR -->
+    <!-- TOP BAR -->
   <div id="topbar">
     <div class="logo">
       <div class="logo-dot">❤</div>
-      Heart Anatomy Explorer
+      Heart Explorer
     </div>
     <div>
-      <button class="tbtn" id="btnBeat" onclick="toggleBeat()">❤️ Beating</button>
-      <button class="tbtn" id="btnFlow" onclick="toggleFlow()">🩸 Blood Flow</button>
-      <button class="tbtn" id="btnInterior" onclick="toggleInterior()">🔬 Interior View</button>
-      <button class="tbtn" id="btnSpin" onclick="toggleSpin()">🔄 Auto-Rotate</button>
-      <button class="tbtn" onclick="showVRGuide()">🥽 VR</button>
+      <button class="tbtn" id="btnJourney"onclick="toggleJourney()" style="border-color:#ffaa00; color:#ffaa00;">🎢 RBC Journey</button>
+      <button class="tbtn" id="btnBeat"   onclick="toggleBeat()">❤️ Beating</button>
+      <button class="tbtn" id="btnFlow"   onclick="toggleFlow()">🩸 Blood Flow</button>
+      <button class="tbtn" id="btnLabels" onclick="toggleLabels()">🏷️ Labels</button>
+      <button class="tbtn" id="btnSpin"   onclick="toggleSpin()">🔄 Rotate</button>
+      <button class="tbtn"                onclick="showVRGuide()">🥽 VR</button>
     </div>
   </div>
 
-  <!-- PART SELECTOR — left overlay -->
+  <!-- PART SELECTOR — left panel -->
   <div id="partSelector">
-    <button class="part-btn" style="--clr:#e74c3c" onclick="showPart('rightAtrium',   this)"><span class="pdot"
-        style="--clr:#e74c3c"></span>Right Atrium</button>
-    <button class="part-btn" style="--clr:#c0392b" onclick="showPart('rightVentricle',this)"><span class="pdot"
-        style="--clr:#c0392b"></span>Right Ventricle</button>
-    <button class="part-btn" style="--clr:#2980b9" onclick="showPart('leftAtrium',    this)"><span class="pdot"
-        style="--clr:#2980b9"></span>Left Atrium</button>
-    <button class="part-btn" style="--clr:#1a7fc1" onclick="showPart('leftVentricle', this)"><span class="pdot"
-        style="--clr:#1a7fc1"></span>Left Ventricle</button>
-    <button class="part-btn" style="--clr:#e67e22" onclick="showPart('aorta',         this)"><span class="pdot"
-        style="--clr:#e67e22"></span>Aorta</button>
-    <button class="part-btn" style="--clr:#9b59b6" onclick="showPart('pulmonaryArtery',this)"><span class="pdot"
-        style="--clr:#9b59b6"></span>Pulmonary Artery</button>
+    <button class="part-btn" style="--clr:#e74c3c" onclick="showPart('rightAtrium',    this)"><span class="pdot" style="--clr:#e74c3c"></span>Right Atrium</button>
+    <button class="part-btn" style="--clr:#c0392b" onclick="showPart('rightVentricle', this)"><span class="pdot" style="--clr:#c0392b"></span>Right Ventricle</button>
+    <button class="part-btn" style="--clr:#2980b9" onclick="showPart('leftAtrium',     this)"><span class="pdot" style="--clr:#2980b9"></span>Left Atrium</button>
+    <button class="part-btn" style="--clr:#1a7fc1" onclick="showPart('leftVentricle',  this)"><span class="pdot" style="--clr:#1a7fc1"></span>Left Ventricle</button>
+    <button class="part-btn" style="--clr:#e67e22" onclick="showPart('aorta',          this)"><span class="pdot" style="--clr:#e67e22"></span>Aorta</button>
+    <button class="part-btn" style="--clr:#9b59b6" onclick="showPart('pulmonaryArtery',this)"><span class="pdot" style="--clr:#9b59b6"></span>Pulmonary Artery</button>
+    <button class="part-btn" style="--clr:#27ae60" onclick="showPart('tricuspidValve', this)"><span class="pdot" style="--clr:#27ae60"></span>Tricuspid Valve</button>
+    <button class="part-btn" style="--clr:#16a085" onclick="showPart('mitralValve',    this)"><span class="pdot" style="--clr:#16a085"></span>Mitral Valve</button>
   </div>
 
-  <!-- INFO PANEL — right overlay -->
+  <!-- INFO PANEL — right drawer -->
   <div id="infoPanel">
     <div class="info-top">
       <div class="info-title-row">
@@ -645,8 +807,8 @@
     </div>
   </div>
 
-  <!-- INTERIOR BADGE -->
-  <div id="interiorBadge">⬡ INTERIOR VIEW</div>
+  <!-- CHAMBER BADGE (shown when labels are on) -->
+  <div id="chamberBadge">⬡ CHAMBER LABELS ON</div>
 
   <!-- VR GUIDE POPUP -->
   <div id="vrGuide" onclick="this.style.display='none'">
@@ -659,27 +821,36 @@
     </span>
   </div>
 
-  <!-- HINT -->
+  <!-- BOTTOM HINT -->
   <div id="hint">🖱 Drag to rotate · Scroll to zoom · Click a part for info</div>
 
-  <!-- ══════════════════════════════════════════
-       A-FRAME SCENE — embedded fills the page
-  ══════════════════════════════════════════ -->
-  <a-scene cursor="rayOrigin: mouse" raycaster="objects: .clickable, .label-entity; far: 30" vr-mode-ui="enabled: true"
+  <!-- JOURNEY OVERLAY -->
+  <div id="journeyOverlay">
+    <div id="journeyText">Preparing Journey...</div>
+    <button id="journeyExit" onclick="toggleJourney()">Stop Journey</button>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       A-FRAME SCENE
+  ═══════════════════════════════════════ -->
+  <a-scene
+    blood-journey
+    cursor="rayOrigin: mouse"
+    raycaster="objects: .clickable, .label-entity; far: 30"
+    vr-mode-ui="enabled: true"
     loading-screen="enabled: false"
-    webxr="optionalFeatures: local-floor,bounded-floor,hand-tracking" embedded>
+    webxr="optionalFeatures: local-floor,bounded-floor,hand-tracking"
+    embedded>
 
     <a-assets timeout="90000">
-      <a-asset-item id="heartModel" src="./assets/human_heart_3d_model__anatomy__medical_project.glb"></a-asset-item>
-      <!-- Interior/cutaway model loaded as a separate asset -->
-      <a-asset-item id="heartInteriorModel" src="./assets/human_heart.glb"></a-asset-item>
+      <!-- Beating heart model — modernized to Metallic-Roughness workflow for correct rendering -->
+      <a-asset-item id="heartModel" src="./assets/beating-heart-mr.glb"></a-asset-item>
     </a-assets>
 
-    <!-- Sky -->
+    <!-- Sky background -->
     <a-sky color="#0e1117"></a-sky>
 
-    <!-- ── LIGHTING STUDIO RIG (Optimized for Mobile WebGL limits) ── -->
-    <!-- Reduced to absolute minimum 3 static lights to guarantee shader compilation on mobile (Peak 7 lights with blood flow) -->
+    <!-- ── LIGHTING STUDIO RIG ── -->
     <a-entity light="type:hemisphere; color:#c8c0b8; groundColor:#3a0008; intensity:0.85"></a-entity>
     <a-entity light="type:directional; color:#fff5e8; intensity:2.8; castShadow:true" position="-3 5 4"></a-entity>
     <a-entity light="type:point; color:#ffffff; intensity:3; distance:7; decay:1.5" position="0 0.5 3.5"></a-entity>
@@ -687,138 +858,122 @@
     <!-- ── HEART PIVOT ── -->
     <a-entity id="heartPivot" position="0 0 0">
 
-      <!-- Exterior Heart model -->
-      <a-entity id="heartMesh" gltf-model="#heartModel" autoscale="size: 1.6" class="clickable"
-        shadow="cast:true; receive:true" visible="true">
+      <!-- Beating Heart model (with interior chambers) -->
+      <a-entity
+        id="heartMesh"
+        gltf-model="#heartModel"
+        autoscale="size: 1.5"
+        animation-mixer="clip: *; timeScale: 0"
+        class="clickable"
+        shadow="cast:true; receive:true"
+        visible="true">
       </a-entity>
 
-      <!-- Interior Heart model (hidden by default) -->
-      <a-entity id="heartInteriorMesh" gltf-model="#heartInteriorModel" autoscale="size: 1.6" class="clickable"
-        shadow="cast:true; receive:true" visible="false">
-      </a-entity>
-
-      <!-- ── INTERIOR LABELS ── -->
+      <!-- ── INTERIOR CHAMBER LABELS (toggled via button) ── -->
+      <!-- ── 3D ANATOMICAL LABELS — with billboarded leader lines ── -->
       <a-entity id="labels3D" visible="false">
 
-        <!-- Right Atrium -->
-        <a-entity position="0.85 0.45 0.1" class="label-entity" data-part="rightAtrium">
-          <a-plane width="0.7" height="0.16"
-            material="color:#2a0008; opacity:0.96; transparent:true; shader:flat"></a-plane>
-          <a-plane width="0.024" height="0.16" position="-0.338 0 0.002"
-            material="color:#e74c3c; opacity:1; shader:flat"></a-plane>
-          <a-text value="Right Atrium" color="#ff7788" width="1.6" align="center" position="0.01 0.035 0.005"></a-text>
-          <a-text value="Receives deoxygenated blood" color="#c8d8f0" width="1.4" align="center"
-            position="0.01 -0.04 0.005"></a-text>
-          <a-cylinder radius="0.006" height="0.4" rotation="0 0 -62" position="-0.2 -0.3 0"
-            material="color:#e74c3c; opacity:0.5; transparent:true; shader:flat"></a-cylinder>
+        <!-- Right Atrium (Blue Side) -->
+        <a-entity position="0.55 0.35 0.35" class="label-entity" billboard data-part="rightAtrium">
+          <a-plane width="0.75" height="0.18" material="color:#050a1a; opacity:0.9; transparent:true; shader:flat; side:double" radius="0.05"></a-plane>
+          <a-plane width="0.02" height="0.18" position="-0.375 0 0.002" material="color:#3399ff; shader:flat"></a-plane>
+          <a-text value="Right Atrium" color="#44aaff" width="1.7" align="center" position="0.02 0.04 0.005"></a-text>
+          <a-text value="Deoxygenated Inflow" color="#99aabb" width="1.3" align="center" position="0.02 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.005" height="0.5" rotation="0 0 70" position="-0.45 -0.2 -0.1" material="color:#3399ff; opacity:0.6; transparent:true"></a-cylinder>
         </a-entity>
 
         <!-- Right Ventricle -->
-        <a-entity position="0.9 -0.35 0.1" class="label-entity" data-part="rightVentricle">
-          <a-plane width="0.72" height="0.16"
-            material="color:#250006; opacity:0.96; transparent:true; shader:flat"></a-plane>
-          <a-plane width="0.024" height="0.16" position="-0.348 0 0.002"
-            material="color:#c0392b; opacity:1; shader:flat"></a-plane>
-          <a-text value="Right Ventricle" color="#ff5566" width="1.6" align="center"
-            position="0.01 0.035 0.005"></a-text>
-          <a-text value="Pumps blood to lungs" color="#c8d8f0" width="1.4" align="center"
-            position="0.01 -0.04 0.005"></a-text>
-          <a-cylinder radius="0.006" height="0.38" rotation="0 0 -75" position="-0.22 -0.25 0"
-            material="color:#c0392b; opacity:0.5; transparent:true; shader:flat"></a-cylinder>
+        <a-entity position="0.65 -0.4 0.3" class="label-entity" billboard data-part="rightVentricle">
+          <a-plane width="0.75" height="0.18" material="color:#050a1a; opacity:0.9; transparent:true; shader:flat; side:double"></a-plane>
+          <a-plane width="0.02" height="0.18" position="-0.375 0 0.002" material="color:#1177ff; shader:flat"></a-plane>
+          <a-text value="Right Ventricle" color="#4499ff" width="1.7" align="center" position="0.02 0.04 0.005"></a-text>
+          <a-text value="Pumps to Lungs" color="#99aabb" width="1.3" align="center" position="0.02 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.005" height="0.5" rotation="0 0 85" position="-0.48 0.02 -0.1" material="color:#1177ff; opacity:0.6; transparent:true"></a-cylinder>
         </a-entity>
 
-        <!-- Left Atrium -->
-        <a-entity position="-0.88 0.45 0.1" class="label-entity" data-part="leftAtrium">
-          <a-plane width="0.7" height="0.16"
-            material="color:#00081f; opacity:0.96; transparent:true; shader:flat"></a-plane>
-          <a-plane width="0.024" height="0.16" position="0.338 0 0.002"
-            material="color:#2980b9; opacity:1; shader:flat"></a-plane>
-          <a-text value="Left Atrium" color="#4499ff" width="1.6" align="center" position="-0.01 0.035 0.005"></a-text>
-          <a-text value="Receives oxygenated blood" color="#c8d8f0" width="1.4" align="center"
-            position="-0.01 -0.04 0.005"></a-text>
-          <a-cylinder radius="0.006" height="0.4" rotation="0 0 62" position="0.2 -0.3 0"
-            material="color:#2980b9; opacity:0.5; transparent:true; shader:flat"></a-cylinder>
+        <!-- Left Atrium (Red Side) -->
+        <a-entity position="-0.55 0.35 0.35" class="label-entity" billboard data-part="leftAtrium">
+          <a-plane width="0.75" height="0.18" material="color:#1a050a; opacity:0.9; transparent:true; shader:flat; side:double"></a-plane>
+          <a-plane width="0.02" height="0.18" position="0.375 0 0.002" material="color:#ff3355; shader:flat"></a-plane>
+          <a-text value="Left Atrium" color="#ff4466" width="1.7" align="center" position="-0.02 0.04 0.005"></a-text>
+          <a-text value="Oxygenated Inflow" color="#cc99aa" width="1.3" align="center" position="-0.02 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.005" height="0.5" rotation="0 0 -70" position="0.45 -0.2 -0.1" material="color:#ff3355; opacity:0.6; transparent:true"></a-cylinder>
         </a-entity>
 
         <!-- Left Ventricle -->
-        <a-entity position="-0.92 -0.35 0.1" class="label-entity" data-part="leftVentricle">
-          <a-plane width="0.72" height="0.16"
-            material="color:#00071c; opacity:0.96; transparent:true; shader:flat"></a-plane>
-          <a-plane width="0.024" height="0.16" position="0.348 0 0.002"
-            material="color:#1a7fc1; opacity:1; shader:flat"></a-plane>
-          <a-text value="Left Ventricle" color="#3399ff" width="1.6" align="center"
-            position="-0.01 0.035 0.005"></a-text>
-          <a-text value="Pumps blood to whole body" color="#c8d8f0" width="1.4" align="center"
-            position="-0.01 -0.04 0.005"></a-text>
-          <a-cylinder radius="0.006" height="0.38" rotation="0 0 75" position="0.22 -0.25 0"
-            material="color:#1a7fc1; opacity:0.5; transparent:true; shader:flat"></a-cylinder>
+        <a-entity position="-0.65 -0.4 0.3" class="label-entity" billboard data-part="leftVentricle">
+          <a-plane width="0.75" height="0.18" material="color:#1a050a; opacity:0.9; transparent:true; shader:flat; side:double"></a-plane>
+          <a-plane width="0.02" height="0.18" position="0.375 0 0.002" material="color:#ff1133; shader:flat"></a-plane>
+          <a-text value="Left Ventricle" color="#ff2244" width="1.7" align="center" position="-0.02 0.04 0.005"></a-text>
+          <a-text value="Pumps to Body" color="#cc99aa" width="1.3" align="center" position="-0.02 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.005" height="0.5" rotation="0 0 -85" position="0.48 0.02 -0.1" material="color:#ff1133; opacity:0.6; transparent:true"></a-cylinder>
         </a-entity>
 
         <!-- Aorta -->
-        <a-entity position="-0.28 1.02 0.1" class="label-entity" data-part="aorta">
-          <a-plane width="0.56" height="0.16"
-            material="color:#1e1000; opacity:0.96; transparent:true; shader:flat"></a-plane>
-          <a-plane width="0.024" height="0.16" position="-0.268 0 0.002"
-            material="color:#e67e22; opacity:1; shader:flat"></a-plane>
-          <a-text value="Aorta" color="#ffaa33" width="1.5" align="center" position="0 0.035 0.005"></a-text>
-          <a-text value="Main arterial trunk" color="#c8d8f0" width="1.3" align="center"
-            position="0 -0.04 0.005"></a-text>
-          <a-cylinder radius="0.006" height="0.28" rotation="0 0 -90" position="-0.02 -0.22 0"
-            material="color:#e67e22; opacity:0.5; transparent:true; shader:flat"></a-cylinder>
+        <a-entity position="-0.15 0.9 0.5" class="label-entity" billboard data-part="aorta">
+          <a-plane width="0.6" height="0.18" material="color:#0a0a0a; opacity:0.95; transparent:true; shader:flat; side:double"></a-plane>
+          <a-plane width="0.02" height="0.18" position="-0.3 0 0.002" material="color:#ffaa00; shader:flat"></a-plane>
+          <a-text value="Aorta" color="#ffaa00" width="1.8" align="center" position="0.02 0.04 0.005"></a-text>
+          <a-text value="Main Artery" color="#bbbbbb" width="1.4" align="center" position="0.02 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.005" height="0.45" rotation="90 0 0" position="0 -0.15 -0.1" material="color:#ffaa00; opacity:0.7; transparent:true"></a-cylinder>
         </a-entity>
 
         <!-- Pulmonary Artery -->
-        <a-entity position="0.36 1.02 0.1" class="label-entity" data-part="pulmonaryArtery">
-          <a-plane width="0.78" height="0.16"
-            material="color:#100018; opacity:0.96; transparent:true; shader:flat"></a-plane>
-          <a-plane width="0.024" height="0.16" position="-0.378 0 0.002"
-            material="color:#9b59b6; opacity:1; shader:flat"></a-plane>
-          <a-text value="Pulmonary Artery" color="#bb55ff" width="1.7" align="center"
-            position="0.01 0.035 0.005"></a-text>
-          <a-text value="To lungs (deoxygenated)" color="#c8d8f0" width="1.5" align="center"
-            position="0.01 -0.04 0.005"></a-text>
-          <a-cylinder radius="0.006" height="0.28" rotation="0 0 90" position="0.02 -0.22 0"
-            material="color:#9b59b6; opacity:0.5; transparent:true; shader:flat"></a-cylinder>
+        <a-entity position="0.25 0.9 0.5" class="label-entity" billboard data-part="pulmonaryArtery">
+          <a-plane width="0.8" height="0.18" material="color:#0a0a0a; opacity:0.95; transparent:true; shader:flat; side:double"></a-plane>
+          <a-plane width="0.02" height="0.18" position="-0.4 0 0.002" material="color:#aa44ff; shader:flat"></a-plane>
+          <a-text value="Pulmonary Artery" color="#bb66ff" width="1.7" align="center" position="0.02 0.04 0.005"></a-text>
+          <a-text value="To Lungs" color="#bbb" width="1.3" align="center" position="0.02 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.005" height="0.4" rotation="90 0 0" position="0 -0.15 -0.1" material="color:#aa44ff; opacity:0.7; transparent:true"></a-cylinder>
+        </a-entity>
+
+        <!-- Tricuspid Valve -->
+        <a-entity position="0.45 0.0 0.4" class="label-entity" billboard data-part="tricuspidValve">
+          <a-plane width="0.75" height="0.18" material="color:#051a05; opacity:0.9; transparent:true; shader:flat; side:double"></a-plane>
+          <a-plane width="0.02" height="0.18" position="-0.375 0 0.002" material="color:#00ff88; shader:flat"></a-plane>
+          <a-text value="Tricuspid Valve" color="#00ffaa" width="1.7" align="center" position="0.02 0.04 0.005"></a-text>
+          <a-text value="Atrio-Ventricular" color="#aabbcc" width="1.3" align="center" position="0.02 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.005" height="0.4" rotation="0 0 90" position="-0.45 0 -0.1" material="color:#00ff88; opacity:0.7; transparent:true"></a-cylinder>
+        </a-entity>
+
+        <!-- Mitral Valve -->
+        <a-entity position="-0.45 0.0 0.4" class="label-entity" billboard data-part="mitralValve">
+          <a-plane width="0.75" height="0.18" material="color:#051a05; opacity:0.9; transparent:true; shader:flat; side:double"></a-plane>
+          <a-plane width="0.02" height="0.18" position="0.375 0 0.002" material="color:#00eeaa; shader:flat"></a-plane>
+          <a-text value="Mitral Valve" color="#00ffcc" width="1.7" align="center" position="-0.02 0.04 0.005"></a-text>
+          <a-text value="Bicuspid Valve" color="#aabbcc" width="1.3" align="center" position="-0.02 -0.04 0.005"></a-text>
+          <a-cylinder radius="0.005" height="0.4" rotation="0 0 -90" position="0.45 0 -0.1" material="color:#00ffaa; opacity:0.7; transparent:true"></a-cylinder>
         </a-entity>
 
       </a-entity><!-- /labels3D -->
 
-      <!-- ── BLOOD FLOW SYSTEM (Surface light washing) ── -->
-      <a-entity id="bloodFlowSystem" blood-flow="active: false"></a-entity>
+      <!-- ── BLOOD FLOW SYSTEM (Particle Engine) ── -->
+      <a-entity id="bloodFlowSystem" blood-particles="active: false"></a-entity>
 
-      <!-- ── VR INFO BOARD (follows camera in VR) ── -->
+      <!-- ── VR INFO BOARD (attached to camera in VR) ── -->
       <a-entity id="vrBoard" visible="false">
-        <a-plane width="1.5" height="0.6"
-          material="color:#080010; opacity:0.95; transparent:true; shader:flat"></a-plane>
-        <a-plane id="vrAccent" width="1.5" height="0.018" position="0 0.29 0.001"
-          material="color:#ff4466; opacity:1; shader:flat"></a-plane>
+        <a-plane width="1.5" height="0.6" material="color:#080010; opacity:0.95; transparent:true; shader:flat"></a-plane>
+        <a-plane id="vrAccent" width="1.5" height="0.018" position="0 0.29 0.001" material="color:#ff4466; opacity:1; shader:flat"></a-plane>
         <a-text id="vrName" value="" color="#ffffff" width="2.8" align="center" position="0 0.19 0.012"></a-text>
-        <a-text id="vrDesc" value="" color="#aabbdd" width="2.5" align="center" position="0 0 0.012" baseline="top"
-          wrap-count="55"></a-text>
+        <a-text id="vrDesc" value="" color="#aabbdd" width="2.5" align="center" position="0 0 0.012" baseline="top" wrap-count="55"></a-text>
         <a-text id="vrFacts" value="" color="#ff8899" width="2.8" align="center" position="0 -0.22 0.012"></a-text>
       </a-entity>
 
     </a-entity><!-- /heartPivot -->
 
-    <!-- ── CAMERA RIG (For VR alignment) ── -->
-    <a-entity id="rig" position="0 0 3.2">
-      <!-- Camera -->
-      <a-camera id="mainCamera" position="0 0 0" look-controls="pointerLockEnabled: false"
-        wasd-controls="enabled: false" fov="50">
-      </a-camera>
-
+    <!-- ── CAMERA RIG ── -->
+    <a-entity id="rig" position="0 0 6.0">
+      <a-camera id="mainCamera" position="0 0 0" look-controls="pointerLockEnabled: false" wasd-controls="enabled: false" fov="65"></a-camera>
       <!-- VR Controllers -->
-      <a-entity id="leftHand" hand-controls="hand:left;  handModelStyle:lowPoly; color:#cc3344"
-        raycaster="objects:.clickable,.label-entity; far:30; showLine:true; lineColor:#ff4466; lineOpacity:0.7"></a-entity>
-      <a-entity id="rightHand" hand-controls="hand:right; handModelStyle:lowPoly; color:#cc3344"
-        raycaster="objects:.clickable,.label-entity; far:30; showLine:true; lineColor:#ff4466; lineOpacity:0.7"></a-entity>
+      <a-entity id="leftHand"  hand-controls="hand:left;  handModelStyle:lowPoly; color:#cc3344" raycaster="objects:.clickable,.label-entity; far:30; showLine:true; lineColor:#ff4466; lineOpacity:0.7"></a-entity>
+      <a-entity id="rightHand" hand-controls="hand:right; handModelStyle:lowPoly; color:#cc3344" raycaster="objects:.clickable,.label-entity; far:30; showLine:true; lineColor:#ff4466; lineOpacity:0.7"></a-entity>
     </a-entity>
 
   </a-scene>
 
-  <!-- ──────────────────────────────────────── SCRIPT ──────────────────────────────────────── -->
+  <!-- ─────────────────────── SCRIPT ─────────────────────── -->
   <script>
-    // ── DATA ──────────────────────────────────────────────────────────────────
+    // ── ANATOMY DATA ──────────────────────────────────────────────────────────
     const PARTS = {
       rightAtrium: {
         color: '#e74c3c', name: 'Right Atrium',
@@ -855,32 +1010,43 @@
         desc: 'The only artery carrying deoxygenated blood. It transports blood from the right ventricle to the lungs for gas exchange.',
         facts: [{ val: '~3 cm', lbl: 'Diameter' }, { val: '~15 mmHg', lbl: 'Pressure' }, { val: 'Dark Red', lbl: 'Blood' }, { val: 'To Lungs', lbl: 'Direction' }],
         funcs: ['Carries deoxygenated blood to lungs', 'Only artery without oxygenated blood', 'Bifurcates into left & right branches', 'Enables gas exchange in alveoli']
+      },
+      tricuspidValve: {
+        color: '#27ae60', name: 'Tricuspid Valve',
+        desc: 'A three-leaflet (three-cusp) atrioventricular valve between the right atrium and right ventricle. It prevents backflow of blood during ventricular contraction.',
+        facts: [{ val: '3 cusps', lbl: 'Leaflets' }, { val: 'RA → RV', lbl: 'Position' }, { val: 'AV Valve', lbl: 'Type' }, { val: 'Backflow', lbl: 'Prevents' }],
+        funcs: ['Prevents blood backflow into RA', 'Opens during diastole (filling)', 'Closes during systole (pumping)', 'Held by chordae tendineae']
+      },
+      mitralValve: {
+        color: '#16a085', name: 'Mitral Valve',
+        desc: 'A bicuspid (two-leaflet) atrioventricular valve between the left atrium and left ventricle. Also called the bicuspid valve.',
+        facts: [{ val: '2 cusps', lbl: 'Leaflets' }, { val: 'LA → LV', lbl: 'Position' }, { val: 'Bicuspid', lbl: 'Also Known' }, { val: 'Backflow', lbl: 'Prevents' }],
+        funcs: ['Controls flow from LA to LV', 'Opens during left ventricular filling', 'Closes during left ventricular pumping', 'Most commonly diseased valve']
       }
     };
 
     // ── STATE ──────────────────────────────────────────────────────────────────
-    let interiorOn = false;
-    let spinOn = false;
-    let beatOn = false;
-    let flowOn = false;
-    let inVR = false;
-    let autoId = null;
+    let labelsOn = false;
+    let spinOn   = false;
+    let beatOn   = false;
+    let flowOn   = false;
+    let inVR     = false;
+    let autoId   = null;
     let rotX = 0, rotY = 0;
     let dragging = false, lastX = 0, lastY = 0;
 
     // ── SHOW PART ──────────────────────────────────────────────────────────────
     function showPart(key, btn) {
-      showPart.__overview = false; // reset overview state since we clicked a specific part
+      showPart.__overview = false;
       const p = PARTS[key];
       if (!p) return;
 
-      // Toggle off if clicking the already active button
+      // Toggle off if already active
       if (btn && btn.classList.contains('active')) {
         closePanel();
         return;
       }
 
-      // HTML overlay panel
       const panel = document.getElementById('infoPanel');
       panel.style.setProperty('--pc', p.color);
       document.getElementById('infoDot').style.cssText = `background:${p.color}; box-shadow:0 0 8px ${p.color}`;
@@ -892,11 +1058,9 @@
       document.getElementById('infoFuncs').innerHTML = p.funcs.map(f => `<li>${f}</li>`).join('');
       panel.classList.add('visible');
 
-      // Active button
       document.querySelectorAll('.part-btn').forEach(b => b.classList.remove('active'));
       if (btn) btn.classList.add('active');
 
-      // VR board
       updateVRBoard(p);
     }
 
@@ -914,21 +1078,14 @@
       if (inVR) document.getElementById('vrBoard').setAttribute('visible', true);
     }
 
-    // ── INTERIOR LABELS & MODEL SWAP ───────────────────────────────────────────
-    function toggleInterior() {
-      interiorOn = !interiorOn;
-
-      // Toggle labels
-      document.getElementById('labels3D').setAttribute('visible', interiorOn);
-
-      // Swap 3D models (Exterior vs Interior)
-      document.getElementById('heartMesh').setAttribute('visible', !interiorOn);
-      document.getElementById('heartInteriorMesh').setAttribute('visible', interiorOn);
-
-      const btn = document.getElementById('btnInterior');
-      btn.classList.toggle('active', interiorOn);
-      btn.textContent = interiorOn ? '🔬 View Exterior' : '🔬 Interior View';
-      document.getElementById('interiorBadge').style.display = interiorOn ? 'block' : 'none';
+    // ── CHAMBER LABELS TOGGLE ─────────────────────────────────────────────────
+    function toggleLabels() {
+      labelsOn = !labelsOn;
+      document.getElementById('labels3D').setAttribute('visible', labelsOn);
+      const btn = document.getElementById('btnLabels');
+      btn.classList.toggle('active', labelsOn);
+      btn.textContent = labelsOn ? '🏷️ Hide Labels' : '🏷️ Chamber Labels';
+      document.getElementById('chamberBadge').style.display = labelsOn ? 'block' : 'none';
     }
 
     // ── AUTO-ROTATE ────────────────────────────────────────────────────────────
@@ -937,42 +1094,32 @@
       spinOn ? startSpin() : stopSpin();
       document.getElementById('btnSpin').classList.toggle('active', spinOn);
     }
-    function startSpin() {
-      stopSpin();
-      autoId = setInterval(() => { rotY += 0.65; applyRot(); }, 16);
-    }
-    function stopSpin() {
-      if (autoId) { clearInterval(autoId); autoId = null; }
-    }
+    function startSpin() { stopSpin(); autoId = setInterval(() => { rotY += 1.5; applyRot(); }, 16); }
+    function stopSpin()  { if (autoId) { clearInterval(autoId); autoId = null; } }
 
-    // ── HEARTBEAT & BLOOD FLOW ──────────────────────────────────────────────────
+    // ── HEARTBEAT & BLOOD FLOW ─────────────────────────────────────────────────
     function toggleBeat() {
       beatOn = !beatOn;
       document.getElementById('btnBeat').classList.toggle('active', beatOn);
-      document.getElementById('heartMesh').setAttribute('heartbeat', 'active', beatOn);
-      document.getElementById('heartInteriorMesh').setAttribute('heartbeat', 'active', beatOn);
+      document.getElementById('heartMesh').setAttribute('animation-mixer', `timeScale: ${beatOn ? 1.5 : 0}`);
     }
 
     function toggleFlow() {
       flowOn = !flowOn;
       document.getElementById('btnFlow').classList.toggle('active', flowOn);
-      document.getElementById('bloodFlowSystem').setAttribute('blood-flow', 'active', flowOn);
+      document.getElementById('bloodFlowSystem').setAttribute('blood-particles', 'active', flowOn);
     }
 
     // ── DRAG-TO-ROTATE ─────────────────────────────────────────────────────────
     function applyRot() {
-      // Restricting rotX prevents the model from flipping completely upside-down 
-      // and causing backwards rotation or losing sight of the model in empty space.
       rotX = Math.max(-90, Math.min(90, rotX));
       document.getElementById('heartPivot').setAttribute('rotation', `${rotX} ${rotY} 0`);
     }
 
     function handleDragStart(x, y, target) {
       if (inVR) return;
-      if (target && target.closest('#topbar, #partSelector, #infoPanel, #hint, #interiorBadge, #vrGuide')) return;
-      dragging = true;
-      lastX = x;
-      lastY = y;
+      if (target && target.closest('#topbar, #partSelector, #infoPanel, #hint, #chamberBadge, #vrGuide')) return;
+      dragging = true; lastX = x; lastY = y;
       if (spinOn) stopSpin();
       document.body.style.cursor = 'grabbing';
     }
@@ -982,8 +1129,7 @@
       rotY += (x - lastX) * 0.45;
       rotX += (y - lastY) * 0.45;
       applyRot();
-      lastX = x;
-      lastY = y;
+      lastX = x; lastY = y;
     }
 
     function handleDragEnd() {
@@ -993,105 +1139,111 @@
       if (spinOn) startSpin();
     }
 
-    // Mouse Events
+    // Mouse events
     document.addEventListener('mousedown', e => { if (e.button === 0) handleDragStart(e.clientX, e.clientY, e.target); });
     document.addEventListener('mousemove', e => handleDragMove(e.clientX, e.clientY));
-    document.addEventListener('mouseup', handleDragEnd);
+    document.addEventListener('mouseup',   handleDragEnd);
 
-    // Touch Events for Mobile
+    // Touch events
     document.addEventListener('touchstart', e => {
       if (e.touches.length === 1) handleDragStart(e.touches[0].clientX, e.touches[0].clientY, e.target);
     }, { passive: false });
-
     document.addEventListener('touchmove', e => {
-      if (dragging && e.touches.length === 1) {
-        e.preventDefault(); // Prevents mobile browser pull-to-refresh and scrolling away from the canvas
-        handleDragMove(e.touches[0].clientX, e.touches[0].clientY);
-      }
+      if (dragging && e.touches.length === 1) { e.preventDefault(); handleDragMove(e.touches[0].clientX, e.touches[0].clientY); }
     }, { passive: false });
-
     document.addEventListener('touchend', handleDragEnd);
 
+    // ── RBC JOURNEY TOGGLE ─────────────────────────────────────────────────────
+    let journeyOn = false;
+    function toggleJourney() {
+      journeyOn = !journeyOn;
+      document.querySelector('a-scene').setAttribute('blood-journey', 'active', journeyOn);
+      document.getElementById('btnJourney').classList.toggle('active', journeyOn);
+      
+      // Handle UI and auto-play animations
+      if (journeyOn) {
+        document.getElementById('partSelector').style.display = 'none';
+        document.getElementById('hint').style.display = 'none';
+        closePanel();
+        if(spinOn) toggleSpin(); // Turn off spin, it makes user dizzy
+        if(!beatOn) toggleBeat(); // Auto-start the heart beating
+        if(!flowOn) toggleFlow(); // Auto-start the fluid dots flow
+      } else {
+        document.getElementById('partSelector').style.display = '';
+        document.getElementById('hint').style.display = '';
+      }
+    }
+
     // ── SCROLL TO ZOOM ─────────────────────────────────────────────────────────
-    let camZ = 3.2;
+    let camZ = window._camZ || 4.0;
     document.addEventListener('wheel', e => {
       if (inVR) return;
       e.preventDefault();
-      camZ = Math.max(1.4, Math.min(6.0, camZ + e.deltaY * 0.004));
+      // Scroll sensitivity adjusted for normalized 1.5 unit scale
+      camZ = window._camZ = Math.max(1.5, Math.min(10.0, (window._camZ || camZ) + e.deltaY * 0.003));
       document.getElementById('rig').setAttribute('position', `0 0 ${camZ.toFixed(2)}`);
     }, { passive: false });
 
     // ── VR EVENTS ──────────────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
       const scene = document.querySelector('a-scene');
-      const cam = document.getElementById('mainCamera');
+      const cam   = document.getElementById('mainCamera');
 
       scene.addEventListener('enter-vr', () => {
         inVR = true;
-        // Attach VR board in front of camera
         const board = document.getElementById('vrBoard');
         cam.appendChild(board);
         board.setAttribute('position', '0 -0.3 -1.5');
         board.setAttribute('visible', false);
-        document.getElementById('topbar').style.display = 'none';
-        document.getElementById('partSelector').style.display = 'none';
-        document.getElementById('infoPanel').style.display = 'none';
-        document.getElementById('hint').style.display = 'none';
+        ['topbar','partSelector','infoPanel','hint'].forEach(id =>
+          document.getElementById(id).style.display = 'none');
       });
 
       scene.addEventListener('exit-vr', () => {
         inVR = false;
-        // Return board to heartPivot
         const board = document.getElementById('vrBoard');
         document.getElementById('heartPivot').appendChild(board);
         board.setAttribute('visible', false);
-        document.getElementById('topbar').style.display = '';
-        document.getElementById('partSelector').style.display = '';
-        document.getElementById('hint').style.display = '';
+        ['topbar','partSelector','hint'].forEach(id =>
+          document.getElementById(id).style.display = '');
       });
 
-      // Label + heart click events
       scene.addEventListener('loaded', () => {
+        // Label clicks
         document.querySelectorAll('.label-entity').forEach(el => {
           el.addEventListener('click', () => {
             const btn = document.querySelector(`.part-btn[onclick*="${el.dataset.part}"]`);
             showPart(el.dataset.part, btn);
           });
         });
+
+        // Clicking the heart model itself shows overview
         document.getElementById('heartMesh').addEventListener('click', () => {
           if (document.getElementById('infoPanel').classList.contains('visible') && showPart.__overview) {
-            // If overview is already open, close it (toggling effect, especially helpful in VR)
             closePanel();
             showPart.__overview = false;
           } else {
-            // Show heart overview
             const p = {
-              color: '#ff4466', name: 'Human Heart',
-              desc: 'A fist-sized muscular organ that pumps blood through the body. It beats ~100,000 times/day, circulating ~5 L of blood per minute through four chambers.',
+              color: '#ff4466', name: 'Beating Human Heart',
+              desc: 'A fist-sized muscular organ that pumps blood through the body. The beating-heart model reveals all four interior chambers in motion — a realistic look at cardiac anatomy in action.',
               facts: [{ val: '~300 g', lbl: 'Weight' }, { val: '72 bpm', lbl: 'Avg Rate' }, { val: '5 L/min', lbl: 'Output' }, { val: '4', lbl: 'Chambers' }],
               funcs: ['Pump oxygenated blood to the body', 'Return deoxygenated blood to lungs', 'Maintain blood pressure', 'Regulate heartbeat via SA node']
             };
             showPart.__overview = true;
-            // Inline show for overview
             const panel = document.getElementById('infoPanel');
             panel.style.setProperty('--pc', p.color);
             document.getElementById('infoDot').style.cssText = `background:${p.color}; box-shadow:0 0 8px ${p.color}`;
             document.getElementById('infoDivider').style.background = `linear-gradient(to right, ${p.color}, transparent)`;
             document.getElementById('infoName').textContent = p.name;
             document.getElementById('infoDesc').textContent = p.desc;
-            document.getElementById('infoFacts').innerHTML = p.facts.map(f => `<div class="fact-card"><span class="fact-val">${f.val}</span><span class="fact-lbl">${f.lbl}</span></div>`).join('');
+            document.getElementById('infoFacts').innerHTML = p.facts.map(f =>
+              `<div class="fact-card"><span class="fact-val">${f.val}</span><span class="fact-lbl">${f.lbl}</span></div>`).join('');
             document.getElementById('infoFuncs').innerHTML = p.funcs.map(f => `<li>${f}</li>`).join('');
             panel.classList.add('visible');
             updateVRBoard(p);
           }
         });
 
-        // Also add click event for the interior mesh to open overview
-        document.getElementById('heartInteriorMesh').addEventListener('click', () => {
-          document.getElementById('heartMesh').click();
-        });
-
-        // Set cursor style on canvas area
         document.querySelector('canvas').style.cursor = 'grab';
       });
     });
@@ -1103,5 +1255,4 @@
     }
   </script>
 </body>
-
 </html>

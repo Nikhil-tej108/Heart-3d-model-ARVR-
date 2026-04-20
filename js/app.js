@@ -1,1 +1,0 @@
-// All logic is now inline in index.html — this file is no longer needed.
