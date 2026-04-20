@@ -226,18 +226,20 @@
       init() {
         this.el.addEventListener('model-loaded', () => {
           const obj = this.el.object3D;
-          // Force a world matrix update to get accurate bounds
           obj.updateMatrixWorld(true);
           
           const box = new THREE.Box3().setFromObject(obj);
           const size = box.getSize(new THREE.Vector3());
           const maxDim = Math.max(size.x, size.y, size.z, 0.01);
           
-          // Calculate scale factor to make the largest dimension equal to this.data.size
           const scaleFactor = this.data.size / maxDim;
           obj.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+          // Store the computed base scale so heartPulseLoop can reference it
+          if (this.el.id === 'heartMesh') {
+            window._heartBaseScale = scaleFactor;
+          }
           
-          // Center the model so it rotates around its true center
           const center = box.getCenter(new THREE.Vector3());
           obj.position.set(
             -center.x * scaleFactor,
@@ -245,10 +247,15 @@
             -center.z * scaleFactor
           );
           
-          // Make sure animation mixer plays at correct speed once turned on
-          this.el.setAttribute('animation-mixer', 'clip: *; timeScale: 0; crossFadeDuration: 0.2');
+          // Start GLB animation at timeScale 1 by default
+          this.el.setAttribute('animation-mixer', 'clip: *; loop: repeat; timeScale: 1; crossFadeDuration: 0.2');
+          // Save reference to mixer for direct speed control
+          window._heartMixer = null; // will be set after component initializes
+          setTimeout(() => {
+            const comp = this.el.components['animation-mixer'];
+            if (comp && comp.mixer) window._heartMixer = comp.mixer;
+          }, 500);
           
-          // Position camera at a safe distance (Size * 2.5)
           const targetDist = this.data.size * 2.5;
           const rigEl = document.getElementById('rig');
           rigEl.setAttribute('position', `0 0 ${targetDist.toFixed(2)}`);
@@ -653,7 +660,7 @@
       line-height: 1.5;
     }
 
-    /* ── CHAMBER BADGE (shown when chambers labels are visible) ── */
+    /* ── CHAMBER BADGE (shown when labels are on) ── */
     #chamberBadge {
       position: fixed;
       top: 62px;
@@ -668,6 +675,75 @@
       display: none;
       z-index: 500;
       pointer-events: none;
+    }
+
+    /* ── PATHOLOGY / ECG ── */
+    .styled-select {
+      background: rgba(10,12,18,0.8);
+      color: #00ffcc;
+      border: 1px solid rgba(0,255,204,0.4);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.75rem;
+      outline: none;
+      cursor: pointer;
+      backdrop-filter: blur(5px);
+      margin-right: 5px;
+    }
+    .styled-select option { background: #050a1a; color: #fff; }
+
+    #ecgContainer {
+      position: fixed;
+      bottom: 20px;
+      left: 20px; 
+      width: 280px;
+      background: rgba(5, 12, 10, 0.85);
+      border: 1px solid rgba(0, 255, 170, 0.4);
+      border-radius: 10px;
+      z-index: 450;
+      box-shadow: 0 4px 20px rgba(0, 255, 170, 0.15);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      backdrop-filter: blur(10px);
+    }
+    #ecgContainer.hidden { display: none; }
+    .ecg-title {
+      font-size: 0.65rem;
+      font-weight: 700;
+      color: #00ffaa;
+      padding: 6px 10px;
+      letter-spacing: 1px;
+      border-bottom: 1px solid rgba(0, 255, 170, 0.2);
+    }
+    .ecg-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 10px;
+      font-size: 0.7rem;
+      color: #00ffaa;
+      background: rgba(0,0,0,0.3);
+    }
+    .bpm-slider {
+      flex: 1;
+      margin: 0 10px;
+      accent-color: #00ffaa;
+    }
+    .fib-btn {
+      background: rgba(255, 50, 50, 0.2);
+      border: 1px solid rgba(255, 50, 50, 0.5);
+      color: #ff5555;
+      border-radius: 4px;
+      font-size: 0.6rem;
+      padding: 3px 6px;
+      cursor: pointer;
+    }
+    .fib-btn:hover { background: rgba(255, 50, 50, 0.4); }
+    #ecgCanvas {
+      width: 100%;
+      height: 48px;
     }
 
     /* Scrollbar */
@@ -743,11 +819,19 @@
 
       #chamberBadge {
         top: auto;
-        bottom: 200px;
+        bottom: 170px;
         right: auto;
         left: 50%;
         transform: translateX(-50%);
       }
+
+      #ecgContainer {
+         bottom: 15px; 
+         left: 50%;
+         transform: translateX(-50%);
+         width: 320px;
+      }
+      .ecg-title { padding: 4px 10px; }
 
       #hint { display: none; }
     }
@@ -761,14 +845,23 @@
     <div class="load-text">Loading Beating Heart…</div>
   </div>
 
-    <!-- TOP BAR -->
+  <!-- TOP BAR -->
   <div id="topbar">
     <div class="logo">
       <div class="logo-dot">❤</div>
       Heart Explorer
     </div>
     <div>
-      <button class="tbtn" id="btnJourney"onclick="toggleJourney()" style="border-color:#ffaa00; color:#ffaa00;">🎢 RBC Journey</button>
+      <select id="diseaseSelect" class="styled-select" onchange="applyDisease(this.value)" style="border-color:#ff4466; color:#ffaaaa;">
+        <option value="none">♥ Healthy (No Disease)</option>
+        <option value="heart_attack">🛑 Myocardial Infarction</option>
+        <option value="cardiomyopathy">🎈 Cardiomyopathy</option>
+        <option value="vfib">⚡ Fibrillation</option>
+        <option value="heart_block">⏸️ AV Heart Block</option>
+      </select>
+      <button class="tbtn" id="btnMute" onclick="toggleMute()" title="Unmute/Mute Audio">🔇</button>
+      <button class="tbtn" id="btnView"    onclick="toggleView()" style="border-color:#00ffcc; color:#00ffcc;">👁️ Switch to Exterior View</button>
+      <button class="tbtn" id="btnJourney" onclick="toggleJourney()" style="border-color:#ffaa00; color:#ffaa00;">🎢 RBC Journey</button>
       <button class="tbtn" id="btnBeat"   onclick="toggleBeat()">❤️ Beating</button>
       <button class="tbtn" id="btnFlow"   onclick="toggleFlow()">🩸 Blood Flow</button>
       <button class="tbtn" id="btnLabels" onclick="toggleLabels()">🏷️ Labels</button>
@@ -830,6 +923,17 @@
     <button id="journeyExit" onclick="toggleJourney()">Stop Journey</button>
   </div>
 
+  <!-- ECG MONITOR -->
+  <div id="ecgContainer">
+    <div class="ecg-title">LIVE ECG <span style="float:right; opacity:0.9" id="ecgStatusText">HEALTHY</span></div>
+    <canvas id="ecgCanvas" width="320" height="48"></canvas>
+    <div class="ecg-controls">
+      <span>BPM: <strong id="bpmReadout">72</strong></span>
+      <input type="range" class="bpm-slider" id="bpmSlider" min="0" max="220" value="72" oninput="changeBPM(this.value)">
+      <button class="fib-btn" onclick="triggerFibrillation()">V-FIB</button>
+    </div>
+  </div>
+
   <!-- ═══════════════════════════════════════
        A-FRAME SCENE
   ═══════════════════════════════════════ -->
@@ -843,8 +947,10 @@
     embedded>
 
     <a-assets timeout="90000">
-      <!-- Beating heart model — modernized to Metallic-Roughness workflow for correct rendering -->
+      <!-- Beating heart model (Interior) -->
       <a-asset-item id="heartModel" src="./assets/beating-heart-mr.glb"></a-asset-item>
+      <!-- Static anatomical model (Exterior) -->
+      <a-asset-item id="exteriorModel" src="./assets/human_heart_3d_model__anatomy__medical_project.glb"></a-asset-item>
     </a-assets>
 
     <!-- Sky background -->
@@ -863,10 +969,20 @@
         id="heartMesh"
         gltf-model="#heartModel"
         autoscale="size: 1.5"
-        animation-mixer="clip: *; timeScale: 0"
+        animation-mixer="clip: *; timeScale: 1"
         class="clickable"
         shadow="cast:true; receive:true"
         visible="true">
+      </a-entity>
+
+      <!-- Exterior anatomical heart (Static) -->
+      <a-entity
+        id="exteriorMesh"
+        gltf-model="#exteriorModel"
+        autoscale="size: 1.5"
+        class="clickable"
+        shadow="cast:true; receive:true"
+        visible="false">
       </a-entity>
 
       <!-- ── INTERIOR CHAMBER LABELS (toggled via button) ── -->
@@ -1025,15 +1141,59 @@
       }
     };
 
+    const DISEASES = {
+      heart_attack: {
+        color: '#ff3355', name: 'Myocardial Infarction',
+        desc: 'Commonly known as a Heart Attack. A blockage in the coronary arteries prevents oxygen from reaching the heart muscle, causing tissue death (ischemia, visible as darkened tissue).',
+        facts: [{ val: 'High', lbl: 'Risk' }, { val: '100-160', lbl: 'BPM Range' }, { val: 'Ischemia', lbl: 'Tissue State' }],
+        funcs: ['Blockage in coronary arteries', 'Extreme sympathetic stress response', 'ST-Segment elevation on ECG']
+      },
+      cardiomyopathy: {
+        color: '#aa55ff', name: 'Dilated Cardiomyopathy',
+        desc: 'The heart chambers become enlarged and the muscle weakens. The heart often beats faster to compensate for its inability to pump a full volume of blood.',
+        facts: [{ val: 'Enlarged', lbl: 'Heart Size' }, { val: '90-130', lbl: 'BPM Range' }, { val: 'Weak', lbl: 'Contractility' }],
+        funcs: ['Chamber dilation (stretching)', 'Compensatory Tachycardia', 'Reduced Ejection Fraction']
+      },
+      vfib: {
+        color: '#ffaa00', name: 'Ventricular Fibrillation',
+        desc: 'A chaotic electrical state where the heart simply quivers. There is no coordinated contraction and zero effective blood flow.',
+        facts: [{ val: 'Critical', lbl: 'Status' }, { val: 'Disorganized', lbl: 'Rate' }, { val: 'None', lbl: 'Output' }],
+        funcs: ['Chaotic electrical signals', 'No pulse produced', 'Immediate life threat']
+      },
+      heart_block: {
+        color: '#00ffcc', name: 'Atrioventricular (AV) Block',
+        desc: 'A delay or complete interruption of the electrical signal between the atria and the ventricles. This results in an abnormally slow heartbeat.',
+        facts: [{ val: 'Blocked', lbl: 'Pathway' }, { val: '30-50', lbl: 'BPM Range' }, { val: 'Bradycardia', lbl: 'Type' }],
+        funcs: ['Electrical signal pause at AV node', 'Severe Bradycardia', 'PR interval prolongation']
+      }
+    };
+
     // ── STATE ──────────────────────────────────────────────────────────────────
     let labelsOn = false;
     let spinOn   = false;
-    let beatOn   = false;
+    let beatOn   = true;  // Healthy heart starts alive by default
     let flowOn   = false;
     let inVR     = false;
     let autoId   = null;
     let rotX = 0, rotY = 0;
     let dragging = false, lastX = 0, lastY = 0;
+
+
+    // ── SET HEART MIXER SPEED — direct, reliable, never breaks the animation ──
+    function setHeartSpeed(ts) {
+      // Direct THREE.js mixer access — fastest, most reliable approach
+      // Does NOT call setAttribute so animation is never restarted
+      if (window._heartMixer) {
+        window._heartMixer.timeScale = ts;
+        return;
+      }
+      // Fallback: try to grab mixer from component
+      const mesh = document.getElementById('heartMesh');
+      if (mesh && mesh.components && mesh.components['animation-mixer'] && mesh.components['animation-mixer'].mixer) {
+        window._heartMixer = mesh.components['animation-mixer'].mixer;
+        window._heartMixer.timeScale = ts;
+      }
+    }
 
     // ── SHOW PART ──────────────────────────────────────────────────────────────
     function showPart(key, btn) {
@@ -1097,11 +1257,197 @@
     function startSpin() { stopSpin(); autoId = setInterval(() => { rotY += 1.5; applyRot(); }, 16); }
     function stopSpin()  { if (autoId) { clearInterval(autoId); autoId = null; } }
 
+    // ── PATHOLOGY & BPM REGULATOR ──────────────────────────────────────────────
+    let targetBPM = 72;
+    let isFibrillation = false;
+    let isAVBlock = false;
+    let currentDisease = 'none';
+    let currentSpeedModifier = 1.0;
+    
+    let audioMuted = true;
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    let audioCtx = null;
+
+    function toggleMute() {
+      audioMuted = !audioMuted;
+      document.getElementById('btnMute').innerText = audioMuted ? '🔇' : '🔊';
+      if(!audioCtx) audioCtx = new AudioContext();
+      if(!audioMuted && audioCtx.state === 'suspended') audioCtx.resume();
+    }
+
+    function toggleBeat() {
+      beatOn = !beatOn;
+      const btn = document.getElementById('btnBeat');
+      if (btn) btn.classList.toggle('active', beatOn);
+
+      if (beatOn && targetBPM > 0) {
+        ecgTime = cycleDuration;
+        setHeartSpeed(currentSpeedModifier);
+      } else {
+        setHeartSpeed(0); // Freeze GLB animation
+      }
+      applyBPM();
+    }
+
+    function applyBPM() {
+      const bpmText = document.getElementById('bpmReadout');
+      const statusText = document.getElementById('ecgStatusText');
+      const intMesh = document.getElementById('heartMesh');
+      if (bpmText) bpmText.innerText = targetBPM;
+
+      currentSpeedModifier = targetBPM / 72.0;
+      let ts = currentSpeedModifier;
+
+      if (!beatOn || targetBPM == 0) {
+        ts = 0;
+        statusText.innerText = "ASYSTOLE (FLATLINE)";
+        statusText.style.color = "#ff3333";
+      } else if (isFibrillation) {
+        statusText.innerText = "V-FIBRILLATION";
+        statusText.style.color = "#ffaa00";
+      } else if (currentDisease === 'heart_attack') {
+        statusText.innerText = "STEMI (HEART ATTACK)";
+        statusText.style.color = "#ff3355";
+      } else if (currentDisease === 'cardiomyopathy') {
+        statusText.innerText = "HEART FAILURE (DCM)";
+        statusText.style.color = "#aa55ff";
+      } else if (isAVBlock) {
+        statusText.innerText = "AV BLOCK (PAUSE)";
+        statusText.style.color = "#00ffcc";
+      } else if (targetBPM < 60) {
+        statusText.innerText = "BRADYCARDIA";
+        statusText.style.color = "#00ffcc";
+      } else if (targetBPM <= 100) {
+        statusText.innerText = "NORMAL SINUS";
+        statusText.style.color = "#00ffaa";
+      } else {
+        statusText.innerText = "TACHYCARDIA";
+        statusText.style.color = "#ff4466";
+      }
+
+      // Control GLB animation speed directly via mixer — never breaks
+      setHeartSpeed(ts);
+    }
+
+    function changeBPM(val) {
+      targetBPM = parseInt(val);
+      if (targetBPM > 0) isFibrillation = false;
+      if (targetBPM > 0 && !beatOn) toggleBeat();
+      else applyBPM();
+    }
+
+    function applyDisease(diseaseId) {
+      // 1. Reset everything
+      isFibrillation = false;
+      isAVBlock = false;
+      currentDisease = diseaseId;
+      document.getElementById('heartMesh').setAttribute('autoscale', 'size: 1.5');
+      
+      // Reset mesh color (if it was darkened) and find the group containing the actual sub-meshes
+      const hObj = document.getElementById('heartMesh').getObject3D('mesh');
+      if(hObj) {
+        hObj.traverse(node => {
+          if(node.isMesh && node.material && node.material.color) {
+            // Restore default (GLTF standard baseColor is usually white when textured)
+            node.material.color.setHex(0xffffff); 
+          }
+        });
+      }
+
+      if (diseaseId === 'none') {
+        document.getElementById('bpmSlider').value = 72;
+        changeBPM(72);
+        if (showPart.__overview) closePanel(); 
+        return;
+      }
+
+      const d = DISEASES[diseaseId];
+      if (!d) return;
+
+      // 2. Apply Custom Disease Logic
+      if (diseaseId === 'heart_attack') {
+         document.getElementById('bpmSlider').value = 135;
+         changeBPM(135);
+         if(hObj) {
+           hObj.traverse(node => {
+             if(node.isMesh && node.material && node.material.color) {
+               node.material.color.setHex(0x553355);
+             }
+           });
+         }
+      } else if (diseaseId === 'cardiomyopathy') {
+         document.getElementById('bpmSlider').value = 105;
+         changeBPM(105);
+         document.getElementById('heartMesh').setAttribute('autoscale', 'size: 1.85');
+      } else if (diseaseId === 'vfib') {
+         document.getElementById('bpmSlider').value = 180;
+         triggerFibrillation();
+      } else if (diseaseId === 'heart_block') {
+         isAVBlock = true;
+         document.getElementById('bpmSlider').value = 35;
+         changeBPM(35);
+      }
+
+      // 3. Populate and Show Info Panel using existing UI
+      const panel = document.getElementById('infoPanel');
+      panel.style.setProperty('--pc', d.color);
+      document.getElementById('infoDot').style.cssText = `background:${d.color}; box-shadow:0 0 8px ${d.color}`;
+      document.getElementById('infoDivider').style.background = `linear-gradient(to right, ${d.color}, transparent)`;
+      document.getElementById('infoName').textContent = d.name;
+      document.getElementById('infoDesc').textContent = d.desc;
+      document.getElementById('infoFacts').innerHTML = d.facts.map(f =>
+        `<div class="fact-card"><span class="fact-val">${f.val}</span><span class="fact-lbl">${f.lbl}</span></div>`).join('');
+      document.getElementById('infoFuncs').innerHTML = d.funcs.map(f => `<li>${f}</li>`).join('');
+      panel.classList.add('visible');
+      showPart.__overview = true; // Hijack overview flag to allow closing normally
+    }
+
+    function triggerFibrillation() {
+      isFibrillation = true;
+      if (!beatOn && currentView === 'interior') toggleBeat();
+      else applyBPM();
+    }
+
+    // Erratic beating handler for Fibrillation
+    setInterval(() => {
+      if (isFibrillation && beatOn && currentView === 'interior') {
+        currentSpeedModifier = 0.5 + Math.random() * 2.5; 
+        document.getElementById('heartMesh').setAttribute('animation-mixer', `timeScale: ${currentSpeedModifier}`);
+      }
+    }, 800);
+
+    // ── LUB-DUB SOUND SYNTHESIS ───────────────────────────────────────────────
+    function playLubDub() {
+      if (audioMuted || !audioCtx || audioCtx.state === 'suspended' || targetBPM === 0 || !beatOn) return;
+      const t = audioCtx.currentTime;
+      
+      // S1 (Lub)
+      const osc1 = audioCtx.createOscillator();
+      const gain1 = audioCtx.createGain();
+      osc1.frequency.setValueAtTime(65, t);
+      osc1.frequency.exponentialRampToValueAtTime(0.01, t + 0.1);
+      gain1.gain.setValueAtTime(0.8, t);
+      gain1.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+      osc1.connect(gain1); gain1.connect(audioCtx.destination);
+      osc1.start(t); osc1.stop(t + 0.1);
+
+      // S2 (Dub)
+      const delay = Math.max(0.15, 0.35 / currentSpeedModifier);
+      const osc2 = audioCtx.createOscillator();
+      const gain2 = audioCtx.createGain();
+      osc2.frequency.setValueAtTime(45, t + delay);
+      osc2.frequency.exponentialRampToValueAtTime(0.01, t + delay + 0.15);
+      gain2.gain.setValueAtTime(0.9, t + delay);
+      gain2.gain.exponentialRampToValueAtTime(0.01, t + delay + 0.15);
+      osc2.connect(gain2); gain2.connect(audioCtx.destination);
+      osc2.start(t + delay); osc2.stop(t + delay + 0.15);
+    }
+
     // ── HEARTBEAT & BLOOD FLOW ─────────────────────────────────────────────────
     function toggleBeat() {
       beatOn = !beatOn;
       document.getElementById('btnBeat').classList.toggle('active', beatOn);
-      document.getElementById('heartMesh').setAttribute('animation-mixer', `timeScale: ${beatOn ? 1.5 : 0}`);
+      applyBPM();
     }
 
     function toggleFlow() {
@@ -1153,6 +1499,43 @@
     }, { passive: false });
     document.addEventListener('touchend', handleDragEnd);
 
+    // ── VIEW TOGGLE (EXTERIOR vs INTERIOR) ───────────────────────────────────────
+    let currentView = 'interior';
+    function toggleView() {
+      const isExt = currentView === 'interior';
+      currentView = isExt ? 'exterior' : 'interior';
+      
+      const intMesh = document.getElementById('heartMesh');
+      const extMesh = document.getElementById('exteriorMesh');
+      const btnView = document.getElementById('btnView');
+      const labels = document.getElementById('labels3D');
+
+      if (isExt) {
+        intMesh.setAttribute('visible', false);
+        extMesh.setAttribute('visible', true);
+        btnView.innerText = "👁️ Switch to Interior View";
+        document.getElementById('ecgContainer').classList.add('hidden'); // Hide ECG for exterior
+        
+        // Hide labels and pause animations for the clinical exterior view
+        labels.setAttribute('visible', false);
+        window._labelsOffBeforeExt = !labelsOn; // remember state
+        document.getElementById('btnLabels').classList.remove('active');
+        labelsOn = false;
+        
+        if(beatOn) toggleBeat();
+        if(flowOn) toggleFlow();
+        if(journeyOn) toggleJourney();
+      } else {
+        intMesh.setAttribute('visible', true);
+        extMesh.setAttribute('visible', false);
+        btnView.innerText = "👁️ Switch to Exterior View";
+        document.getElementById('ecgContainer').classList.remove('hidden');
+        
+        // Auto-restore heartbeat for the interior view
+        if(!beatOn) toggleBeat();
+      }
+    }
+
     // ── RBC JOURNEY TOGGLE ─────────────────────────────────────────────────────
     let journeyOn = false;
     function toggleJourney() {
@@ -1179,10 +1562,155 @@
     document.addEventListener('wheel', e => {
       if (inVR) return;
       e.preventDefault();
-      // Scroll sensitivity adjusted for normalized 1.5 unit scale
       camZ = window._camZ = Math.max(1.5, Math.min(10.0, (window._camZ || camZ) + e.deltaY * 0.003));
       document.getElementById('rig').setAttribute('position', `0 0 ${camZ.toFixed(2)}`);
     }, { passive: false });
+
+    // ── LIVE ECG RENDERER ──────────────────────────────────────────────────────
+    const ecgCanvas = document.getElementById('ecgCanvas');
+    const ecgCtx = ecgCanvas.getContext('2d');
+    let ecgX = 0, lastEcgX = 0, lastEcgY = 30;
+    
+    // State variables
+    let ecgTime = 0;
+    let cycleDuration = 1.0;
+    let isDroppedBeat = false;
+    let lastTime = performance.now();
+
+    // 1. Mathematically accurate ECG using Gaussian waves
+    function ecgWave(t, disease, isDropped) {
+       let y = 30; // Baseline
+       if (!beatOn || journeyOn || targetBPM == 0) return 30;
+       
+       if (disease === 'vfib') {
+          return 30 + (Math.random() - 0.5) * 20; 
+       }
+
+       let p_a = -3,   p_t = 0.20, p_b = 0.025;
+       let q_a = 4,    q_t = 0.37, q_b = 0.01;
+       let r_a = -35,  r_t = 0.40, r_b = 0.012;
+       let s_a = 15,   s_t = 0.43, s_b = 0.015;
+       let t_a = -6,   t_t = 0.65, t_b = 0.05;
+
+       if (disease === 'cardiomyopathy') {
+          let ampMap = 0.4; // Reduced amplitude
+          p_a *= ampMap; q_a *= ampMap; r_a *= ampMap; s_a *= ampMap; t_a *= ampMap;
+       }
+       
+       if (disease === 'heart_attack') {
+          // ST Elevation (STEMI)
+          s_a = 0; 
+          t_t = 0.55; 
+          t_a = -12; 
+       }
+
+       if (disease === 'heart_block') {
+          // PR Prolongation
+          q_t += 0.15; r_t += 0.15; s_t += 0.15; t_t += 0.15;
+       }
+
+       function gauss(a, center, b) {
+          return a * Math.exp(-Math.pow(t - center, 2) / (2 * Math.pow(b, 2)));
+       }
+
+       y += gauss(p_a, p_t, p_b);
+       
+       if (!isDropped) {
+         y += gauss(q_a, q_t, q_b);
+         y += gauss(r_a, r_t, r_b);
+         y += gauss(s_a, s_t, s_b);
+         
+         if (disease === 'heart_attack') {
+             y -= 8 * Math.exp(-Math.pow(t - 0.48, 2) / (2 * Math.pow(0.06, 2)));
+         }
+         y += gauss(t_a, t_t, t_b);
+       }
+
+       return y;
+    }
+
+    // 2. State & Timing Update
+    function updateECG(deltaTime) {
+      if (targetBPM === 0 || !beatOn || journeyOn) {
+         ecgTime = 0;
+         return;
+      }
+      
+      cycleDuration = 60 / targetBPM;
+      ecgTime += deltaTime;
+      
+      if (ecgTime >= cycleDuration) {
+         ecgTime -= cycleDuration;
+         
+         // Occasionally miss a beat during Heart Block
+         if (currentDisease === 'heart_block' && Math.random() < 0.3) {
+            isDroppedBeat = true;
+         } else {
+            isDroppedBeat = false;
+            // Play Audio syncing with the start of a pulse!
+            if (currentView === 'interior') {
+              playLubDub();
+            }
+         }
+      }
+    }
+
+    // 3. Canvas Rendering Subsystem
+    function drawECG(deltaTime) {
+      if(!ecgCtx) return;
+      
+      let speed = 96 * deltaTime; 
+      if (currentDisease === 'vfib') speed = 120 * deltaTime;
+      
+      ecgCtx.fillStyle = 'rgba(5, 12, 10, 1)';
+      ecgCtx.fillRect(ecgX, 0, Math.max(speed + 8, 10), 60); 
+      
+      ecgCtx.beginPath();
+      ecgCtx.moveTo(lastEcgX, lastEcgY);
+      
+      let steps = Math.max(1, Math.ceil(speed * 3));
+      let yFinal = lastEcgY;
+
+      for (let i = 1; i <= steps; i++) {
+         let subDt = deltaTime * (i / steps);
+         let subTime = ecgTime - deltaTime + subDt; 
+         // Wrap subTime into [0, cycleDuration)
+         subTime = ((subTime % cycleDuration) + cycleDuration) % cycleDuration;
+         let t = subTime / cycleDuration;
+         
+         let subY = ecgWave(t, currentDisease, isDroppedBeat);
+         let subX = lastEcgX + (i / steps) * speed;
+         
+         ecgCtx.lineTo(subX, subY);
+         yFinal = subY;
+      }
+      
+      ecgCtx.strokeStyle = '#00ffaa';
+      ecgCtx.lineWidth = 1.5;
+      ecgCtx.lineJoin = 'round';
+      ecgCtx.lineCap = 'round';
+      ecgCtx.stroke();
+      
+      lastEcgY = yFinal;
+      lastEcgX = ecgX = ecgX + speed;
+      
+      if(ecgX >= 320) {
+        ecgX = 0;
+        lastEcgX = 0;
+      }
+    }
+
+    function renderECGLoop() {
+      const now = performance.now();
+      const dt = Math.min((now - lastTime) / 1000, 0.05); 
+      lastTime = now;
+      
+      updateECG(dt);
+      drawECG(dt);
+      
+      requestAnimationFrame(renderECGLoop);
+    }
+    requestAnimationFrame(renderECGLoop);
 
     // ── VR EVENTS ──────────────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
@@ -1217,34 +1745,86 @@
           });
         });
 
-        // Clicking the heart model itself shows overview
-        document.getElementById('heartMesh').addEventListener('click', () => {
-          if (document.getElementById('infoPanel').classList.contains('visible') && showPart.__overview) {
-            closePanel();
-            showPart.__overview = false;
-          } else {
-            const p = {
-              color: '#ff4466', name: 'Beating Human Heart',
-              desc: 'A fist-sized muscular organ that pumps blood through the body. The beating-heart model reveals all four interior chambers in motion — a realistic look at cardiac anatomy in action.',
-              facts: [{ val: '~300 g', lbl: 'Weight' }, { val: '72 bpm', lbl: 'Avg Rate' }, { val: '5 L/min', lbl: 'Output' }, { val: '4', lbl: 'Chambers' }],
-              funcs: ['Pump oxygenated blood to the body', 'Return deoxygenated blood to lungs', 'Maintain blood pressure', 'Regulate heartbeat via SA node']
-            };
-            showPart.__overview = true;
-            const panel = document.getElementById('infoPanel');
-            panel.style.setProperty('--pc', p.color);
-            document.getElementById('infoDot').style.cssText = `background:${p.color}; box-shadow:0 0 8px ${p.color}`;
-            document.getElementById('infoDivider').style.background = `linear-gradient(to right, ${p.color}, transparent)`;
-            document.getElementById('infoName').textContent = p.name;
-            document.getElementById('infoDesc').textContent = p.desc;
-            document.getElementById('infoFacts').innerHTML = p.facts.map(f =>
-              `<div class="fact-card"><span class="fact-val">${f.val}</span><span class="fact-lbl">${f.lbl}</span></div>`).join('');
-            document.getElementById('infoFuncs').innerHTML = p.funcs.map(f => `<li>${f}</li>`).join('');
-            panel.classList.add('visible');
-            updateVRBoard(p);
-          }
-        });
+        // Smart Heart Click Logic
+        function handleHeartClick(e) {
+          if (!e.detail || !e.detail.intersection) return;
+          let foundKey = null;
+          const meshName = e.detail.intersection.object ? e.detail.intersection.object.name.toLowerCase() : '';
+          if (meshName.includes('right') && meshName.includes('atrium')) foundKey = 'rightAtrium';
+          else if (meshName.includes('right') && meshName.includes('ventricle')) foundKey = 'rightVentricle';
+          else if (meshName.includes('left') && meshName.includes('atrium')) foundKey = 'leftAtrium';
+          else if (meshName.includes('left') && meshName.includes('ventricle')) foundKey = 'leftVentricle';
+          else if (meshName.includes('aort')) foundKey = 'aorta';
+          else if ((meshName.includes('pulmonary') && (meshName.includes('artery')||meshName.includes('trunk'))) || meshName === 'pa') foundKey = 'pulmonaryArtery';
+          else if (meshName.includes('tricuspid')) foundKey = 'tricuspidValve';
+          else if (meshName.includes('mitral') || meshName.includes('bicuspid')) foundKey = 'mitralValve';
 
+          if (!foundKey) {
+            const hit = e.detail.intersection.point;
+            const centers = {
+              rightAtrium: new THREE.Vector3(0.55, 0.35, 0.35),
+              rightVentricle: new THREE.Vector3(0.65, -0.4, 0.3),
+              leftAtrium: new THREE.Vector3(-0.55, 0.35, 0.35),
+              leftVentricle: new THREE.Vector3(-0.65, -0.4, 0.3),
+              aorta: new THREE.Vector3(-0.15, 0.9, 0.5),
+              pulmonaryArtery: new THREE.Vector3(0.25, 0.9, 0.5),
+              tricuspidValve: new THREE.Vector3(0.45, 0.0, 0.4),
+              mitralValve: new THREE.Vector3(-0.45, 0.0, 0.4)
+            };
+            let closestDist = Infinity;
+            for (const [key, pos] of Object.entries(centers)) {
+              const dist = hit.distanceTo(pos);
+              if (dist < closestDist) { closestDist = dist; foundKey = key; }
+            }
+            if (closestDist > 0.75) foundKey = null; 
+          }
+
+          if (foundKey) {
+            const btn = document.querySelector(`.part-btn[onclick*="${foundKey}"]`);
+            showPart(foundKey, btn);
+          } else {
+            if (document.getElementById('infoPanel').classList.contains('visible') && showPart.__overview) {
+              closePanel();
+              showPart.__overview = false;
+            } else {
+              showPartOverview();
+            }
+          }
+        }
+
+        function showPartOverview() {
+          const p = {
+            color: '#ff4466', name: currentView === 'interior' ? 'Beating Heart (Interior)' : 'Human Heart (Exterior)',
+            desc: 'A fist-sized muscular organ that pumps blood. Select a specific chamber or artery for anatomical data.',
+            facts:[{val:'~300g',lbl:'Weight'},{val:'72bpm',lbl:'Rate'},{val:'5L/m',lbl:'Flow'},{val:'4',lbl:'Chambers'}],
+            funcs:['Circulate blood','Oxygen exchange','Pressure control','Heartbeat regulation']
+          };
+          showPart.__overview = true;
+          const panel = document.getElementById('infoPanel');
+          panel.style.setProperty('--pc', p.color);
+          document.getElementById('infoDot').style.cssText = `background:${p.color}`;
+          document.getElementById('infoName').textContent = p.name;
+          document.getElementById('infoDesc').textContent = p.desc;
+          document.getElementById('infoFacts').innerHTML = p.facts.map(f => `<div class="fact-card"><span class="fact-val">${f.val}</span><span class="fact-lbl">${f.lbl}</span></div>`).join('');
+          document.getElementById('infoFuncs').innerHTML = p.funcs.map(f => `<li>${f}</li>`).join('');
+          panel.classList.add('visible');
+        }
+
+        document.getElementById('heartMesh').addEventListener('click', handleHeartClick);
+        document.getElementById('exteriorMesh').addEventListener('click', handleHeartClick);
+
+        document.getElementById('btnBeat').classList.add('active');
         document.querySelector('canvas').style.cursor = 'grab';
+
+        // Grab the mixer after component settles and apply initial speed
+        setTimeout(() => {
+          const comp = document.getElementById('heartMesh').components['animation-mixer'];
+          if (comp && comp.mixer) {
+            window._heartMixer = comp.mixer;
+            window._heartMixer.timeScale = currentSpeedModifier;
+          }
+        }, 800);
+        applyBPM();
       });
     });
 
