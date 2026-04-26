@@ -794,18 +794,8 @@
       height: 48px;
     }
 
-    /* Scrollbar */
-    #infoPanel::-webkit-scrollbar {
-      width: 4px;
-    }
-
-    #infoPanel::-webkit-scrollbar-thumb {
-      background: rgba(255, 50, 80, 0.2);
-      border-radius: 2px;
-    }
-
     /* ── RESPONSIVE / MOBILE ── */
-    @media (max-width: 768px) {
+    @media (max-width: 1024px) {
       #topbar {
         height: auto;
         min-height: 54px;
@@ -814,26 +804,20 @@
         gap: 5px;
         background: rgba(10, 12, 18, 0.98);
       }
-
-      .logo {
-        display: none;
-      }
-
+      .logo { display: none; }
       #topbar>div {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
         gap: 4px;
         width: 100%;
       }
-
       .tbtn {
         margin: 0 !important;
-        padding: 6px 2px !important;
-        font-size: 0.65rem !important;
+        padding: 8px 2px !important;
+        font-size: 0.7rem !important;
         width: 100%;
         text-align: center;
       }
-
       #partSelector {
         top: auto;
         bottom: 20px;
@@ -843,18 +827,17 @@
         flex-wrap: wrap;
         justify-content: center;
         width: 100%;
+        max-width: 95vw;
         gap: 4px;
-        padding: 0 10px;
+        padding: 0 5px;
       }
-
       .part-btn {
-        padding: 6px 10px;
-        font-size: 0.7rem;
+        padding: 8px 12px;
+        font-size: 0.75rem;
         border-left: 1px solid rgba(255, 255, 255, 0.08);
         border-bottom: 2px solid var(--clr);
         border-radius: 6px;
       }
-
       #infoPanel {
         top: auto;
         left: 0;
@@ -862,31 +845,27 @@
         bottom: -100%;
         width: 100%;
         max-width: none;
-        height: 60%;
-        border-radius: 20px 20px 0 0;
+        height: 65%;
+        border-radius: 24px 24px 0 0;
         border: none;
-        border-top: 2px solid rgba(255, 50, 80, 0.4);
+        border-top: 3px solid rgba(255, 50, 80, 0.5);
         transform: translate(0, 0);
         margin: 0;
         padding-bottom: 30px;
         transition: bottom 0.4s cubic-bezier(0.1, 0.9, 0.2, 1);
       }
-
       #infoPanel.visible {
         display: block;
         bottom: 0;
         right: 0;
-        transform: translate(0, 0);
       }
-
       #chamberBadge {
         top: auto;
-        bottom: 170px;
+        bottom: 180px;
         right: auto;
         left: 50%;
         transform: translateX(-50%);
       }
-
       #ecgContainer {
         bottom: 15px;
         left: 50%;
